@@ -33,6 +33,12 @@ class TetrisWorld {
   double _fall = 0;
   bool over = false;
 
+  /// The piece that spawns after [current] (shown in the preview window).
+  SoloPiece get next => _next;
+
+  /// Whether [p] overlaps the walls, the floor or a locked cell (used for the ghost piece).
+  bool collides(Tetromino p) => _collides(p);
+
   /// 0 = empty, otherwise 1 + piece index (used for colour).
   List<List<int>> get board => well;
 

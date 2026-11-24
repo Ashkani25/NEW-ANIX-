@@ -8,6 +8,7 @@ import '../arcade_kit/arcade_shell.dart';
 // `SoloRun` is declared in arcade_shell.dart and is the shell's controller; re-exported so
 // registry and board files that only need the controller do not import the shell machinery.
 export '../arcade_kit/arcade_shell.dart' show SoloRun;
+import '../arcade_kit/arcade_fx.dart';
 import '../arcade_kit/arcade_skin.dart';
 import '../core/game_contract.dart';
 
@@ -108,6 +109,16 @@ abstract class SoloBoardState<T extends SoloBoard> extends State<T> with SingleT
   /// Seconds since the board was created (always advancing, for idle animations).
   double clock = 0;
 
+  /// Shared particle / shake / flash layer. Painted on top of [paint] by the base painter and
+  /// kept running after game over so explosions finish over the result card.
+  late final ArcadeFx fx = ArcadeFx(
+    enabled: widget.run.launch.fancyEffects && !widget.run.launch.reducedMotion,
+    skin: widget.run.skin,
+  );
+
+  /// Last painted size (lets input handlers spawn effects in screen space).
+  Size lastSize = Size.zero;
+
   /// Starts a fresh run (called by [restart] and available to subclasses).
   void reset();
 
@@ -134,6 +145,7 @@ abstract class SoloBoardState<T extends SoloBoard> extends State<T> with SingleT
     if (dt > 0.02) dt = 0.02;
     clock += dt;
     if (simulating) step(dt);
+    fx.update(dt);
     frame.value++;
   }
 
@@ -163,7 +175,17 @@ class _SoloPainter extends CustomPainter {
   final SoloBoardState state;
 
   @override
-  void paint(Canvas canvas, Size size) => state.paint(canvas, size);
+  void paint(Canvas canvas, Size size) {
+    state.lastSize = size;
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    final Offset shake = state.fx.shakeOffset;
+    canvas.translate(shake.dx, shake.dy);
+    state.paint(canvas, size);
+    state.fx.paint(canvas);
+    canvas.restore();
+    state.fx.paintFlash(canvas, size);
+  }
 
   @override
   bool shouldRepaint(covariant _SoloPainter old) => true;
