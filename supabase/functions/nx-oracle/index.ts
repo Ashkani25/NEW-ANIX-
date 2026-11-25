@@ -27,13 +27,18 @@ const PROVIDERS: Record<string, Provider> = {
     base: "https://inference.dahl.global/v1",
     models: ["deepseek-ai/DeepSeek-V4-Flash-0731", "zai-org/GLM-5.3-Flash", "MiniMaxAI/MiniMax-M2.7"],
   },
+  kenari: {
+    name: "kenari",
+    base: "https://kenari.id/v1",
+    models: ["glm-4-7-flash:free", "hy4-flash:free", "beam-1-0:free"],
+  },
   tokenrouter: {
     name: "tokenrouter",
     base: "https://api.tokenrouter.com/v1",
     models: ["google/gemini-3.8-flash", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.6-luna"],
   },
 };
-const ORDER = ["openrouter", "dahl", "tokenrouter"];
+const ORDER = ["openrouter", "dahl", "kenari", "tokenrouter"];
 const DAILY_LIMIT = 300;
 
 const GAME_RULES: Record<string, string> = {
