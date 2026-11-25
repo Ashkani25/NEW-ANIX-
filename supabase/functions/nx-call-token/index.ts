@@ -74,20 +74,26 @@ Deno.serve(async (req) => {
         auth: { persistSession: false },
       });
       if (body.match === true) {
-        const [ok0, mres, pres] = await Promise.all([
+        // Match voice: only the match's players get the room, and only an unmuted player gets the mic.
+        // (nx_matches is readable by its players only, so a non-player never resolves the row.)
+        const [ok0, mres, pres, gm] = await Promise.all([
           authed(),
-          gs.from("nx_matches").select("room_id, players").eq("id", room).maybeSingle(),
+          gs.from("nx_matches").select("room_id, players, status").eq("id", room).maybeSingle(),
           profileP,
+          gs.rpc("nx_g_is_muted", { u: uid }).then((r) => r.data === true, () => false),
         ]);
         if (!ok0) return json({ error: "unauthorized" }, 401);
-        const mt = mres.data as { room_id?: string | null; players?: unknown } | null;
-        let ok = !!(mt && Array.isArray(mt.players) && mt.players.includes(uid));
+        const mt = mres.data as { room_id?: string | null; players?: unknown; status?: string } | null;
+        const isPlayer = !!(mt && Array.isArray(mt.players) && mt.players.includes(uid));
+        if (!isPlayer) return json({ error: "not_member" }, 403);
         const key2 = mt?.room_id ?? room;
-        if (!ok && mt?.room_id) {
-          const rm = await gs.from("nx_room_members").select("role, muted").eq("room_id", mt.room_id).eq("user_id", uid).maybeSingle();
-          ok = !!rm.data;
+        let roomMuted = false;
+        if (mt?.room_id) {
+          const rm = await gs.from("nx_room_members").select("role, muted").eq("room_id", mt.room_id).eq("user_id", uid)
+            .maybeSingle();
+          roomMuted = rm.data?.muted === true;
         }
-        if (!ok) return json({ error: "not_member" }, 403);
+        const canPub = !gm && !roomMuted;
         const gp = pres.data;
         const lk = `nxg-game-${key2}`;
         const gat = new AccessToken(key, secret, {
@@ -96,46 +102,52 @@ Deno.serve(async (req) => {
           ttl: "30m",
           metadata: JSON.stringify({ avatar: gp?.avatar ?? null, role: "player" }),
         });
-        gat.addGrant({ room: lk, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
+        gat.addGrant({ room: lk, roomJoin: true, canPublish: canPub, canSubscribe: true, canPublishData: true });
         return json({
           url,
           token: await gat.toJwt(),
           room: lk,
           identity: uid,
           name: gp?.username ?? "Pilot",
-          canPublish: true,
+          canPublish: canPub,
           role: "player",
           ttl: 1800,
         });
       }
 
-      const [ok0, rpRes, rgRes, rmRes, pres] = await Promise.all([
+      const [ok0, rpRes, rgRes, rmRes, pres, gm] = await Promise.all([
         authed(),
         gs.from("nx_room_players").select("seat").eq("room_id", room).eq("user_id", uid).maybeSingle(),
         gs.from("nx_room_game_players").select("seat").eq("room_id", room).eq("user_id", uid).maybeSingle(),
         gs.from("nx_room_members").select("role, muted").eq("room_id", room).eq("user_id", uid).maybeSingle(),
         profileP,
+        gs.rpc("nx_g_is_muted", { u: uid }).then((r) => r.data === true, () => false),
       ]);
       if (!ok0) return json({ error: "unauthorized" }, 401);
-      const ok = !!(rpRes.data || rgRes.data || rmRes.data);
-      if (!ok) return json({ error: "not_member" }, 403);
+      const seated = !!(rpRes.data || rgRes.data);
+      const rmg = rmRes.data as { role?: string; muted?: boolean } | null;
+      if (!seated && !rmg) return json({ error: "not_member" }, 403);
+      // Seated players and speakers/managers talk; spectators (listeners) and anyone muted (room or global) do not.
+      const speakerRole = rmg ? (rmg.role === "manager" || rmg.role === "speaker") : true;
+      const canPubG = (seated || speakerRole) && rmg?.role !== "spectator" && rmg?.muted !== true && !gm;
+      const roleG = seated ? "player" : (rmg?.role ?? "spectator");
       const gp = pres.data;
       const lk = `nxg-game-${room}`;
       const gat = new AccessToken(key, secret, {
         identity: uid,
         name: gp?.username ?? "Pilot",
         ttl: "30m",
-        metadata: JSON.stringify({ avatar: gp?.avatar ?? null, role: "player" }),
+        metadata: JSON.stringify({ avatar: gp?.avatar ?? null, role: roleG }),
       });
-      gat.addGrant({ room: lk, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
+      gat.addGrant({ room: lk, roomJoin: true, canPublish: canPubG, canSubscribe: true, canPublishData: true });
       return json({
         url,
         token: await gat.toJwt(),
         room: lk,
         identity: uid,
         name: gp?.username ?? "Pilot",
-        canPublish: true,
-        role: "player",
+        canPublish: canPubG,
+        role: roleG,
         ttl: 1800,
       });
     }
@@ -145,16 +157,17 @@ Deno.serve(async (req) => {
         global: { headers: { Authorization: auth } },
         auth: { persistSession: false },
       });
-      const [ok0, rres, pres] = await Promise.all([
+      const [ok0, rres, pres, gmr] = await Promise.all([
         authed(),
         gs.from("nx_room_members").select("role, muted").eq("room_id", room).eq("user_id", uid).maybeSingle(),
         profileP,
+        gs.rpc("nx_g_is_muted", { u: uid }).then((r) => r.data === true, () => false),
       ]);
       if (!ok0) return json({ error: "unauthorized" }, 401);
       const rm = rres.data;
       if (!rm) return json({ error: "not_member" }, 403);
       const rp = pres.data;
-      const canPub = (rm.role === "manager" || rm.role === "speaker") && !rm.muted;
+      const canPub = (rm.role === "manager" || rm.role === "speaker") && !rm.muted && !gmr;
       const lk = `nxg-room-${room}`;
       const rat = new AccessToken(key, secret, {
         identity: uid,
@@ -205,6 +218,7 @@ Deno.serve(async (req) => {
     at.addGrant({ room: lkRoom, roomJoin: true, canPublish, canSubscribe: true, canPublishData: true });
     return json({ url, token: await at.toJwt(), room: lkRoom, identity: uid, name, canPublish, ttl: 1800 });
   } catch (e) {
-    return json({ error: "server", detail: String(e).slice(0, 200) }, 500);
+    console.error("nx-call-token", e);
+    return json({ error: "server" }, 500);
   }
 });

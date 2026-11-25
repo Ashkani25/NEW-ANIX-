@@ -13,10 +13,36 @@ const cors = {
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-async function grant(email: string, password: string) {
+/// The CALLER's ip. Supabase's edge gateway sets cf-connecting-ip / x-forwarded-for (first hop = the client); GoTrue
+/// only ever sees this function's own egress ip, so its per-ip limit would throttle every user together (#9).
+function clientIp(req: Request): string {
+  const cf = req.headers.get("cf-connecting-ip")?.trim();
+  if (cf) return cf.slice(0, 64);
+  const xff = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  if (xff) return xff.slice(0, 64);
+  return (req.headers.get("x-real-ip") ?? "unknown").trim().slice(0, 64);
+}
+
+/// Throttle per client ip + username, per ip and per username (nx_login_throttle, service role only).
+async function throttle(ip: string, username: string): Promise<{ ok: boolean; retry_after?: number }> {
+  try {
+    const r = await fetch(`${URL_}/rest/v1/rpc/nx_login_throttle`, {
+      method: "POST",
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_ip: ip, p_username: username }),
+    });
+    if (!r.ok) return { ok: false, retry_after: 30 }; // fail closed
+    const b = await r.json();
+    return { ok: b?.ok === true, retry_after: b?.retry_after };
+  } catch {
+    return { ok: false, retry_after: 30 };
+  }
+}
+
+async function grant(email: string, password: string, ip: string) {
   const r = await fetch(`${URL_}/auth/v1/token?grant_type=password`, {
     method: "POST",
-    headers: { apikey: ANON, "Content-Type": "application/json" },
+    headers: { apikey: ANON, "Content-Type": "application/json", "X-Forwarded-For": ip },
     body: JSON.stringify({ email, password }),
   });
   return { status: r.status, body: await r.json().catch(() => ({})) };
@@ -34,8 +60,16 @@ Deno.serve(async (req) => {
   if (!/^[a-z0-9_.]{2,24}$/.test(username) || password.length < 6 || password.length > 128) {
     return json({ error_code: "invalid_credentials", msg: "Invalid login credentials" }, 400);
   }
+  const ip = clientIp(req);
+  const t = await throttle(ip, username);
+  if (!t.ok) {
+    return new Response(JSON.stringify({ error_code: "over_request_rate_limit", msg: "Too many login attempts" }), {
+      status: 429,
+      headers: { ...cors, "Content-Type": "application/json", "Retry-After": String(t.retry_after ?? 60) },
+    });
+  }
   // 1) internal username account matching initial signup handle
-  let r = await grant(`${username}@users.nexora.invalid`, "nx#" + password);
+  let r = await grant(`${username}@users.nexora.invalid`, "nx#" + password, ip);
   if (r.status === 200) return json(r.body);
   if (r.status === 429) return json(r.body, 429);
   // 2) account owning that username in public.profiles (either real e-mail or renamed internal account)
@@ -47,7 +81,7 @@ Deno.serve(async (req) => {
   const email = q.ok ? await q.json() : null;
   if (typeof email === "string" && email) {
     const internal = email.endsWith("@users.nexora.invalid");
-    r = await grant(email, internal ? "nx#" + password : password);
+    r = await grant(email, internal ? "nx#" + password : password, ip);
     return json(r.body, r.status);
   }
   return json({ error_code: "invalid_credentials", msg: "Invalid login credentials" }, 400);
