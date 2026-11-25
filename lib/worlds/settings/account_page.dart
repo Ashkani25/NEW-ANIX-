@@ -29,6 +29,13 @@ String nxAuthError(BuildContext context, String? code) {
     case 'not_configured':
       return context.tx('این نسخه بدون سرور ساخته شده است.',
           'This build has no server configured.');
+    case 'rate_limit':
+      return context.tx('تلاش زیاد بود؛ کمی صبر کن و دوباره امتحان کن.', 'Too many attempts; wait a moment and try again.');
+    case 'otp_invalid':
+      return context.tx('کد نادرست است یا منقضی شده.', 'The code is wrong or has expired.');
+    case 'smtp':
+      return context.tx('ارسال ایمیل از سرور فعلاً ممکن نیست؛ بعداً امتحان کن.',
+          'The server cannot send email right now; try again later.');
     default:
       return code;
   }
@@ -423,17 +430,9 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                       TextButton(
                         onPressed: o.busy
                             ? null
-                            : () async {
-                                if (!_email.text.contains('@')) return;
-                                final bool ok =
-                                    await o.resetPassword(_email.text);
-                                if (!context.mounted) return;
-                                setState(() => _info = ok
-                                    ? context.tx(
-                                        'لینک بازیابی به ایمیلت فرستاده شد.',
-                                        'A reset link was sent to your email.')
-                                    : nxAuthError(context, o.lastError));
-                              },
+                            : () => context.push(Uri(path: '/forgot-password', queryParameters: <String, String>{
+                                  if (_email.text.contains('@')) 'email': _email.text.trim(),
+                                }).toString()),
                         child: Text(context.tx(
                             'رمز را فراموش کرده‌ام', 'Forgot password')),
                       ),

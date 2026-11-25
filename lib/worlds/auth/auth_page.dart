@@ -204,6 +204,18 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                         ),
                         const SizedBox(height: 10),
                         _passField(_pass, context.tx('رمز عبور', 'Password'), const <String>[AutofillHints.password]),
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: TextButton(
+                            key: const ValueKey<String>('auth-forgot'),
+                            onPressed: _busy
+                                ? null
+                                : () => context.push(Uri(path: '/forgot-password', queryParameters: <String, String>{
+                                      if (_id.text.contains('@')) 'email': _id.text.trim(),
+                                    }).toString()),
+                            child: Text(context.tx('رمز را فراموش کرده‌ای؟', 'Forgot password?')),
+                          ),
+                        ),
                       ] else ...<Widget>[
                         TextField(
                           key: const ValueKey<String>('auth-user'),

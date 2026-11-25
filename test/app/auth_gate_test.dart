@@ -38,4 +38,11 @@ void main() {
     expect(authRedirect(Uri.parse('/auth'), NxAccess.needsAuth, hasIdentity: true), isNull);
     expect(authRedirect(Uri.parse('/intro?next=/auth'), NxAccess.needsAuth, hasIdentity: false), isNull);
   });
+
+  test('password recovery and legal pages open without a session', () {
+    for (final String p in <String>['/forgot-password', '/reset-password', '/legal/privacy', '/legal/terms']) {
+      expect(authRedirect(Uri.parse(p), NxAccess.needsAuth, hasIdentity: false), isNull, reason: p);
+      expect(authRedirect(Uri.parse(p), NxAccess.guest, hasIdentity: true), isNull, reason: p);
+    }
+  });
 }

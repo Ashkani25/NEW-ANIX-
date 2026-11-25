@@ -53,6 +53,8 @@ class OnlineService extends ChangeNotifier {
       final String? tok = s.session?.accessToken;
       if (_games != null) unawaited(_games!.realtime.setAuth(tok));
       if (_social != null) unawaited(_social!.realtime.setAuth(tok));
+      if (s.event == AuthChangeEvent.passwordRecovery) recoveryPending = true;
+      if (s.event == AuthChangeEvent.signedOut) recoveryPending = false;
       if (s.session != null &&
           (s.event == AuthChangeEvent.signedIn || s.event == AuthChangeEvent.initialSession ||
               s.event == AuthChangeEvent.userUpdated)) {
@@ -402,11 +404,68 @@ class OnlineService extends ChangeNotifier {
     return ok ?? false;
   }
 
+  // ------------------------------------------------------------------ password reset (P0 #2)
+  /// Deep link of the recovery e-mail (`nexora://login-callback/reset?code=…`). It must be listed in Supabase →
+  /// Authentication → URL Configuration → Redirect URLs. supabase_flutter exchanges the code for a session; the router
+  /// sees the `/reset` path and opens the set-new-password screen.
+  static const String recoveryRedirect = 'nexora://login-callback/reset';
+
+  /// True between a recovery sign-in (e-mail link or recovery code) and the new password being saved; the router keeps
+  /// the user on `/reset-password` until then.
+  bool recoveryPending = false;
+
+  void markRecovery() {
+    if (recoveryPending) return;
+    recoveryPending = true;
+    notifyListeners();
+  }
+
+  /// Sends the recovery e-mail (link + 6-digit code when the template has `{{ .Token }}`).
   Future<bool> resetPassword(String email) async {
+    final String e = email.trim();
+    lastRetryAfter = null;
     final bool? ok = await _run<bool>((SupabaseClient c) async {
-      await c.auth.resetPasswordForEmail(email.trim());
+      await c.auth.resetPasswordForEmail(e, redirectTo: recoveryRedirect);
       return true;
     });
+    if (ok == true) _otpSentAt['reset:${e.toLowerCase()}'] = DateTime.now();
+    return ok ?? false;
+  }
+
+  /// Seconds until another recovery e-mail may be requested for [email].
+  int resetCooldownLeft(String email) => otpCooldownLeft('reset:${email.trim()}');
+
+  /// Verifies the recovery code from the e-mail; on success the user is signed in for the reset only.
+  Future<bool> verifyRecoveryCode(String email, String code) async {
+    final String token = normalizeEmailOtpDigits(code);
+    if (!RegExp(r'^\d{6,10}$').hasMatch(token)) {
+      lastError = 'otp_invalid';
+      notifyListeners();
+      return false;
+    }
+    final bool? ok = await _run<bool>((SupabaseClient c) async {
+      await c.auth.verifyOTP(email: email.trim(), token: token, type: OtpType.recovery);
+      return c.auth.currentSession != null;
+    });
+    if (ok == true) markRecovery();
+    return ok ?? false;
+  }
+
+  /// Saves the new password of a recovery session (e-mail accounts store the password as typed).
+  Future<bool> completeRecovery(String newPassword) async {
+    if (newPassword.length < minPasswordLength) {
+      lastError = 'weak_password';
+      notifyListeners();
+      return false;
+    }
+    final bool? ok = await _run<bool>((SupabaseClient c) async {
+      if (c.auth.currentSession == null) throw const AuthException('Auth session missing', code: 'session_missing');
+      final String pw = isInternalAccount ? 'nx#$newPassword' : newPassword;
+      await c.auth.updateUser(UserAttributes(password: pw));
+      return true;
+    });
+    if (ok == true) recoveryPending = false;
+    notifyListeners();
     return ok ?? false;
   }
 
