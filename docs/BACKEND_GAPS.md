@@ -4,7 +4,6 @@ _Deliverable §9. Honest list of capabilities that are not yet real. The app nev
 ## 1. Not implemented at all (no client path, no backend)
 | Capability | Current UI treatment |
 |---|---|
-| **Server-side account deletion** | `ProfileService.resetAll()` clears the **local** copy only. No delete RPC/Edge Function exists in `supabase/`. The Settings "Delete identity and all data" action clears local data and is labelled as such; full server-side deletion (profile, social, messages, media, storage, games-project mirror) is **not yet implemented** and must be built server-side before it can be claimed. Documented as required backend work. |
 | **Voice/video calls (LiveKit)** | Call screen exists (`/call/:chatId`) and requests tokens through the trusted `nx-call-token` Edge Function — but with no LiveKit server connected, calls do not connect. The UI shows honest connecting/denied/unavailable states; no call is simulated. |
 | **Real-user messaging** | Orbit Network conversation UI is fully built; sending to real users requires the server. Offline builds show `OnlineOnlyNotice`. |
 | **Public Nova Gallery sharing** | Posts/stories compose and save locally; public publishing to other users requires the server. |
@@ -28,8 +27,19 @@ _Deliverable §9. Honest list of capabilities that are not yet real. The app nev
 - **Games project**: rooms, matchmaking, matches, leaderboards, tournament engine — no own auth; receives the auth project's access token.
 - JWT, RLS and Edge Function boundaries preserved (`supabase/functions/nx-login`, `nx-call-token`, `nx-oracle`; games functions under `supabase/games/`). No service-role credentials or secrets in the client.
 
-## 4. Required backend work before full deletion claim
-1. `delete_account` RPC/Edge Function on the core project (auth + profiles + social + Nova + chat cascade).
-2. Games-project mirror cleanup RPC (`nx_profiles` mirror, rooms, match history, leaderboard rows).
-3. Media/storage cleanup policy (uploaded avatars/post media).
-4. Client: call the deletion flow, show pending/success/failure truthfully — until then the UI only clears local data and says so.
+## 4. Account deletion (implemented, P0 #1)
+Settings → Account & data → **Delete account permanently** (`lib/worlds/settings/delete_account.dart`).
+1. **Core** `nx_delete_account(p_confirm 'DELETE', p_password, p_dry_run)` (`supabase/migrations/20261125200000_p0_01_account_deletion.sql`), self only, security definer:
+   password re-check (bcrypt against `auth.users`, rate-limited 5 / 15 min) for accounts that have one; the platform owner cannot delete itself.
+   Group chats / communities pass ownership to the next member (empty ones are removed), direct chats stay for the other person;
+   messages in other people's chats are anonymised (`author` → null, name `[deleted]`, media blanked); tournaments pass to the platform owner;
+   everything else is deleted (profile, wallet, posts, comments, likes, follows, memberships, device tokens, reports filed, error logs,
+   storage objects) and finally the `auth.users` row (cascades).
+2. **Games project** `nx_bridge_forget_user(p_user)` (service_role only, `supabase/games/migrations/20261125200000_p0_01_account_deletion.sql`),
+   called by core over the pg_net bridge: hosted rooms pass to another member, tournaments to the platform owner, mirror profile + game rows deleted.
+   The immutable tournament ledger/audit keep the bare uuid for accounting.
+3. **Storage**: the client lists its files (`nx_my_storage_objects`) and removes them through the Storage API after a dry-run check; the RPC
+   then clears any leftover object rows (legacy `avatars`/`chat` buckets have no client delete policy, so their blobs may stay orphaned in the
+   bucket store until a service-side cleanup runs).
+4. Client flow: confirm dialog (type DELETE / «حذف» + password if any) → dry run → storage cleanup → delete → local wipe → local sign-out → `/auth`.
+   Guests (local-only) still get "Erase all data on this phone".

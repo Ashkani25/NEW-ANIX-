@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/profile/profile_service.dart';
 import '../../core/settings/app_settings.dart';
-import '../../core/storage/local_store.dart';
 import '../../core/theme/nx_theme.dart';
 import '../../core/widgets/nx_widgets.dart';
 import '../../core/ui2/anix_brand.dart';
@@ -15,6 +14,7 @@ import '../../core/online/online_service.dart';
 import '../oracle_core/persona/oracle_tour.dart';
 import '../../features/admin/admin_access.dart';
 import 'account_page.dart';
+import 'delete_account.dart';
 
 import '../../core/ui2/anix_kit.dart';
 import '../../core/ui2/luxe.dart';
@@ -189,48 +189,7 @@ class SettingsPage extends ConsumerWidget {
               const SizedBox(height: 10),
               const AccountStatusCard(),
               const SizedBox(height: 10),
-              OutlinedButton.icon(
-                style:
-                    OutlinedButton.styleFrom(foregroundColor: NxColors.danger),
-                icon: const Icon(Icons.delete_forever_rounded),
-                label: Text(context.tx('حذف هویت و همه‌ی داده‌ها',
-                    'Delete identity and all data')),
-                onPressed: () async {
-                  final bool online = ref.read(onlineProvider).isOnline;
-                  final ok = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AnixDialog(
-                      title: Text(ctx.tx('مطمئنی؟', 'Are you sure?')),
-                      content: Text(online
-                          ? ctx.tx(
-                              'تمام داده‌های این دستگاه پاک می‌شوند. حذف کامل از سرور هنوز فعال نشده، پس داده‌های همگانی‌شده ممکن است همچنان در سرور بمانی. این کار قابل بازگشت نیست.',
-                              'All data on this device will be erased. Full deletion from the server is not enabled yet, so data you synced may remain on the server. This cannot be undone.')
-                          : ctx.tx(
-                              'همه‌ی پیشرفت، آیتم‌ها و پست‌ها روی همین دستگاه پاک می‌شوند. قابل بازگشت نیست.',
-                              'All progress, items and posts on this device will be erased. This cannot be undone.')),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: Text(ctx.tx('انصراف', 'Cancel'))),
-                        FilledButton(
-                          style: FilledButton.styleFrom(
-                              backgroundColor: NxColors.danger),
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: Text(ctx.tx('حذف', 'Delete')),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (ok == true) {
-                    final store = LocalStore.instance;
-                    for (final k in store.prefs.getKeys().toList()) {
-                      if (!k.startsWith('settings.')) await store.remove(k);
-                    }
-                    await p.resetAll();
-                    if (context.mounted) context.go('/onboarding');
-                  }
-                },
-              ),
+              const DeleteAccountButton(),
             ]),
           ),
           _section(context, context.tx('درباره‌ی نیکسورا ۲', 'About NEXORA 2')),
