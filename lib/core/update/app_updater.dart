@@ -32,6 +32,9 @@ class AppUpdater extends ChangeNotifier {
   static const String apkName = 'ANIX-universal.apk';
   static const MethodChannel _ch = MethodChannel('nexora/updater');
 
+  /// Whether this build may update itself from GitHub releases (sideload builds only; store builds never do).
+  static const bool sideloadEnabled = true;
+
   AppRelease? available;
   double? progress; // null = not downloading
   String? error;
