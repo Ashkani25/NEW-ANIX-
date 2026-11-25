@@ -20,6 +20,7 @@ import '../../../games/game_registry.dart';
 import 'online_match_page.dart';
 
 import '../../../core/ui2/anix_kit.dart';
+import '../../../core/safety/safety_actions.dart';
 class _Seat {
   _Seat(
       {required this.userId,
@@ -182,6 +183,8 @@ class _OnlineLobbyPageState extends ConsumerState<OnlineLobbyPage> {
   }
 
   String _pretty(String m) {
+    final String? safety = safetyErrorText(m, context.isFa);
+    if (safety != null) return safety;
     if (m.contains('room not found')) {
       return context.tx('اتاقی با این کد پیدا نشد', 'No room with that code');
     }
@@ -601,7 +604,12 @@ class _OnlineLobbyPageState extends ConsumerState<OnlineLobbyPage> {
                                                 'Invite sent'));
                                     Navigator.pop(ctx);
                                   }
-                                } catch (_) {}
+                                } catch (e) {
+                                  if (ctx.mounted && mounted) {
+                                    luxeToast(context, safetyErrorText(e, context.isFa) ??
+                                        context.tx('دعوت فرستاده نشد', 'Invite not sent'), error: true);
+                                  }
+                                }
                               },
                               child: Text(ctx.tx('دعوت', 'Invite')),
                             ),

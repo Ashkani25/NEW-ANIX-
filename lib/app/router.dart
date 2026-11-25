@@ -18,8 +18,10 @@ import '../worlds/arcade/game_setup_page.dart';
 import '../worlds/arcade/online/leaderboard_page.dart';
 import '../worlds/arcade/online/online_lobby_page.dart';
 import '../worlds/auth/auth_page.dart';
+import '../worlds/auth/password_reset_pages.dart';
 import '../worlds/auth/signin_required_page.dart';
 import '../worlds/hub/hub_page.dart';
+import '../worlds/legal/legal_page.dart';
 import '../worlds/hub/luxe_station_page.dart';
 import '../worlds/intro/intro_video_page.dart';
 import '../worlds/nexora_exchange/exchange_page.dart';
@@ -32,6 +34,7 @@ import '../worlds/orbit_network/ui/orbit_call_page.dart';
 import '../worlds/personal_orbit/personal_orbit_page.dart';
 import '../worlds/settings/account_page.dart';
 import '../worlds/settings/settings_page.dart';
+import '../worlds/settings/blocked_users_page.dart';
 import '../worlds/rooms/rooms_page.dart';
 import '../worlds/rooms/talk_room_page.dart';
 import '../worlds/social_hub/social_hub_page.dart';
@@ -81,6 +84,15 @@ GoRouter buildRouter(WidgetRef ref) {
       final Uri u = state.uri;
       // Email magic-link callback (nexora://login-callback?code=…): supabase_flutter exchanges the code itself; the
       // router only has to leave the callback URL (it has no page) and land where the session decides.
+      // Password-recovery link (nexora://login-callback/reset?code=…): supabase_flutter signs in with the code; the
+      // user then must choose a new password before anything else.
+      if ((u.host == 'login-callback' && u.path.startsWith('/reset')) || u.path.startsWith('/login-callback/reset')) {
+        Future<void>.microtask(online.markRecovery);
+        return '/reset-password';
+      }
+      if (online.recoveryPending && u.path != '/reset-password' && u.path != '/forgot-password') {
+        return '/reset-password';
+      }
       if (u.host == 'login-callback' || u.path == '/login-callback') {
         if (access() != NxAccess.signedIn) return '/auth';
         return identityReady() ? '/hub' : '/onboarding';
@@ -127,9 +139,17 @@ GoRouter buildRouter(WidgetRef ref) {
       GoRoute(path: '/social', pageBuilder: (context, state) => _warp(state, const SocialHubPage())),
       GoRoute(path: '/rewards', pageBuilder: (context, state) => _warp(state, const RewardsPage())),
       GoRoute(path: '/settings', builder: (context, state) => const SettingsPage()),
+      GoRoute(path: '/settings/blocked', builder: (context, state) => const BlockedUsersPage()),
       GoRoute(path: '/admin/oracle', builder: (context, state) => const OracleConfigPage()),
       GoRoute(path: '/admin', builder: (context, state) => const AdminPage()),
       GoRoute(path: '/force-password', builder: (context, state) => const ForcePasswordPage()),
+      GoRoute(
+        path: '/forgot-password',
+        builder: (context, state) => ForgotPasswordPage(email: state.uri.queryParameters['email']),
+      ),
+      GoRoute(path: '/reset-password', builder: (context, state) => const ResetPasswordPage()),
+      GoRoute(path: '/legal/privacy', builder: (context, state) => const LegalPage(kind: 'privacy')),
+      GoRoute(path: '/legal/terms', builder: (context, state) => const LegalPage(kind: 'terms')),
       GoRoute(path: '/account', builder: (context, state) => const AccountPage()),
       GoRoute(
         path: '/oracle',

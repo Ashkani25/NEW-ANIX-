@@ -13,6 +13,7 @@ import '../core/online/invite_watcher.dart';
 import '../core/online/online_service.dart';
 import '../core/settings/app_settings.dart';
 import '../core/ui2/oracle_buddy.dart';
+import '../core/update/app_gate.dart';
 import '../core/update/app_updater.dart';
 import '../core/update/update_banner.dart';
 import '../core/theme/nx_theme.dart';
@@ -63,6 +64,7 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
       ref.read(onlineProvider).addListener(_announcements.sync);
       _announcements.sync();
       AppUpdater.instance.start();
+      AppGate.instance.start();
     });
   }
 
@@ -117,11 +119,13 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
           child: Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown: (_) => OracleBus.lastTouch = DateTime.now(),
-            child: UpdateOverlay(
-              child: Stack(children: <Widget>[
-                child ?? const SizedBox.shrink(),
-                Positioned.fill(child: OracleBuddy(router: _router)),
-              ]),
+            child: AppGateOverlay(
+              child: UpdateOverlay(
+                child: Stack(children: <Widget>[
+                  child ?? const SizedBox.shrink(),
+                  Positioned.fill(child: OracleBuddy(router: _router)),
+                ]),
+              ),
             ),
           ),
         );

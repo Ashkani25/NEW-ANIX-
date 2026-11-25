@@ -23,6 +23,7 @@ import 'orbit_sheets.dart';
 
 import '../../../core/ui2/anix_kit.dart';
 import '../../../core/ui2/luxe.dart';
+import '../../../core/safety/safety_actions.dart';
 
 /// One conversation (Saved Orbit, group or channel).
 class OrbitChatPage extends ConsumerStatefulWidget {
@@ -373,6 +374,20 @@ class _OrbitChatPageState extends ConsumerState<OrbitChatPage> {
                   : c.tx('ستاره‌دار کردن', 'Star')),
               onTap: () => Navigator.pop(c, 'star'),
             ),
+          if (!mine && !m.deleted && m.authorId.isNotEmpty)
+            ListTile(
+              key: const ValueKey<String>('msg-report'),
+              leading: const Icon(Icons.flag_rounded),
+              title: Text(c.tx('گزارش پیام', 'Report message')),
+              onTap: () => Navigator.pop(c, 'report'),
+            ),
+          if (!mine && m.authorId.isNotEmpty)
+            ListTile(
+              key: const ValueKey<String>('msg-block'),
+              leading: const Icon(Icons.block_rounded),
+              title: Text(c.tx('مسدود کردن ${m.authorName}', 'Block ${m.authorName}')),
+              onTap: () => Navigator.pop(c, 'block'),
+            ),
           if (mine && !m.deleted)
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded,
@@ -403,6 +418,13 @@ class _OrbitChatPageState extends ConsumerState<OrbitChatPage> {
         break;
       case 'copy':
         await Clipboard.setData(ClipboardData(text: m.text));
+        break;
+      case 'report':
+        await reportContent(context,
+            targetUser: m.authorId, kind: 'message', targetId: m.id, label: m.authorName, excerpt: m.text);
+        break;
+      case 'block':
+        await toggleBlockUser(context, userId: m.authorId, username: m.authorName, currentlyBlocked: false);
         break;
       case 'pin':
         await _ctrl.togglePin(widget.chatId, m.id);

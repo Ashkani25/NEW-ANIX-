@@ -53,6 +53,7 @@ class _AdminPageState extends ConsumerState<AdminPage> {
       if (a.can(AdminPerm.announcements)) const _Tab('announcements', 'اطلاعیه', 'Announcements', Icons.campaign_rounded),
       if (a.can(AdminPerm.oracle)) const _Tab('oracle', 'اوراکل', 'ORACLE', Icons.psychology_alt_rounded),
       if (a.can(AdminPerm.admins)) const _Tab('audit', 'گزارش', 'Audit log', Icons.receipt_long_rounded),
+      if (a.isAdmin) const _Tab('errors', 'خطاهای برنامه', 'App errors', Icons.bug_report_rounded),
     ];
     if (!a.loaded) {
       return const Scaffold(backgroundColor: NxColors.luxeBg, body: Center(child: CircularProgressIndicator()));
@@ -95,6 +96,7 @@ class _AdminPageState extends ConsumerState<AdminPage> {
               'matches' => const _MatchesTab(),
               'announcements' => const _AnnouncementsTab(),
               'oracle' => const _OracleTab(),
+              'errors' => const _ClientErrorsTab(),
               _ => const _AuditTab(),
             },
         ]),
@@ -961,6 +963,49 @@ class _ReportsTabState extends ConsumerState<_ReportsTab> {
           ),
         ),
       ]);
+}
+
+// ------------------------------------------------------------------ app errors (client_errors)
+class _ClientErrorsTab extends ConsumerWidget {
+  const _ClientErrorsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => _Loader(
+        load: () => _api(ref).clientErrors(),
+        build: (BuildContext context, Map<String, dynamic> d, VoidCallback reload) {
+          final List<dynamic> rows = (d['errors'] as List<dynamic>?) ?? const <dynamic>[];
+          return ListView(padding: const EdgeInsets.symmetric(vertical: 10), children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(context.tx('۲۴ ساعت اخیر: ${d['last_24h'] ?? 0}', 'Last 24 h: ${d['last_24h'] ?? 0}'),
+                  style: const TextStyle(fontWeight: FontWeight.w900)),
+            ),
+            if (rows.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 60),
+                child: Center(child: Text(context.tx('خطایی ثبت نشده', 'No errors reported'))),
+              ),
+            for (final dynamic e in rows)
+              Builder(builder: (BuildContext context) {
+                final Map<String, dynamic> r = Map<String, dynamic>.from(e as Map);
+                return _card(
+                    child: ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: Text('${r['message']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                  subtitle: Text(
+                      '${r['kind']} · ${r['username'] ?? context.tx('بدون ورود', 'signed out')} · '
+                      'v${r['app_version'] ?? '?'} · ${_shortTime(r['created_at'])}',
+                      style: const TextStyle(color: NxColors.textDim, fontSize: 11)),
+                  children: <Widget>[
+                    SelectableText('${r['platform'] ?? ''}\n${r['stack'] ?? ''}',
+                        textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 11)),
+                  ],
+                ));
+              }),
+          ]);
+        },
+      );
 }
 
 // ------------------------------------------------------------------ announcements

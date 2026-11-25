@@ -12,6 +12,7 @@ import '../../core/profile/profile_service.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/nx_theme.dart';
 import '../../core/widgets/nx_widgets.dart';
+import '../legal/legal_texts.dart';
 
 /// Sign in / sign up with a USERNAME and password (e-mail optional, no codes). Login accepts the username or the
 /// e-mail. The session persists until sign-out; the last username is pre-filled after sign-out, and the fields carry
@@ -34,6 +35,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
   bool _show = false;
   String? _error;
   bool _prefilled = false;
+  bool _accepted = false;
 
   @override
   void didChangeDependencies() {
@@ -67,6 +69,9 @@ class _AuthPageState extends ConsumerState<AuthPage> {
         err = context.tx('نام کاربری: ۳ تا ۲۰ حرف انگلیسی کوچک، عدد، _ یا .', 'Username: 3–20 of a-z, 0-9, _ or .');
       } else if (_newPass.text.length < OnlineService.minPasswordLength) {
         err = context.tx('رمز حداقل ۸ نویسه باشد.', 'Password must be at least 8 characters.');
+      } else if (!_accepted) {
+        err = context.tx('برای ساخت حساب، شرایط استفاده و حریم خصوصی را بپذیر.',
+            'To create an account, accept the Terms of Use and Privacy Policy.');
       } else if (_email.text.trim().isNotEmpty && !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(_email.text.trim())) {
         err = context.tx('ایمیل معتبر نیست (اختیاری است؛ می‌توانی خالی بگذاری).', 'That email is not valid (it is optional; you can leave it empty).');
       }
@@ -82,7 +87,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       _error = null;
     });
     final bool ok = _signUp
-        ? await online.signUpUsername(_user.text, _newPass.text, email: _email.text)
+        ? await online.signUpUsername(_user.text, _newPass.text, email: _email.text, termsVersion: legalVersion)
         : await online.signInIdentifier(_id.text, _pass.text);
     if (!mounted) return;
     if (!ok) {
@@ -110,7 +115,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       case 'invalid_login':
         return context.tx('نام کاربری/ایمیل یا رمز نادرست است.', 'Wrong username/email or password.');
       case 'username_taken':
-        return context.tx('این نام کاربری گرفته شده است.', 'That username is taken.');
+        return context.tx('این نام کاربری گرفته شده یا مجاز نیست.', 'That username is taken or not allowed.');
       case 'bad_username':
         return context.tx('نام کاربری: ۳ تا ۲۰ حرف انگلیسی کوچک، عدد، _ یا .', 'Username: 3–20 of a-z, 0-9, _ or .');
       case 'email_taken':
@@ -204,6 +209,18 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                         ),
                         const SizedBox(height: 10),
                         _passField(_pass, context.tx('رمز عبور', 'Password'), const <String>[AutofillHints.password]),
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: TextButton(
+                            key: const ValueKey<String>('auth-forgot'),
+                            onPressed: _busy
+                                ? null
+                                : () => context.push(Uri(path: '/forgot-password', queryParameters: <String, String>{
+                                      if (_id.text.contains('@')) 'email': _id.text.trim(),
+                                    }).toString()),
+                            child: Text(context.tx('رمز را فراموش کرده‌ای؟', 'Forgot password?')),
+                          ),
+                        ),
                       ] else ...<Widget>[
                         TextField(
                           key: const ValueKey<String>('auth-user'),
@@ -237,6 +254,26 @@ class _AuthPageState extends ConsumerState<AuthPage> {
                               helperText: context.tx('فقط برای بازیابی؛ به کسی نشان داده نمی‌شود', 'Only for recovery; never shown to anyone'),
                               prefixIcon: const Icon(Icons.email_outlined)),
                         ),
+                        const SizedBox(height: 6),
+                        CheckboxListTile(
+                          key: const ValueKey<String>('auth-accept-terms'),
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          value: _accepted,
+                          onChanged: _busy ? null : (bool? v) => setState(() => _accepted = v ?? false),
+                          title: Text(
+                              context.tx('حداقل ۱۳ سال دارم و شرایط استفاده و سیاست حریم خصوصی را می‌پذیرم.',
+                                  'I am at least 13 and accept the Terms of Use and Privacy Policy.'),
+                              style: TextStyle(color: visual.text, fontSize: 13)),
+                        ),
+                        Wrap(alignment: WrapAlignment.center, spacing: 8, children: <Widget>[
+                          TextButton(
+                              onPressed: () => context.push('/legal/terms'),
+                              child: Text(context.tx('شرایط استفاده', 'Terms of Use'))),
+                          TextButton(
+                              onPressed: () => context.push('/legal/privacy'),
+                              child: Text(context.tx('حریم خصوصی', 'Privacy Policy'))),
+                        ]),
                       ],
                       const SizedBox(height: 14),
                       FilledButton.icon(

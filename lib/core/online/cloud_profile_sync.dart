@@ -294,7 +294,7 @@ class CloudProfileSync {
   }
 
   /// Validates and saves a real username (`3..20` ASCII letters, digits, `_`, `.`).
-  /// Returns `'ok'`, `'taken'`, `'bad_length'`, `'bad_chars'`, or `'network'`.
+  /// Returns `'ok'`, `'taken'` (also for reserved / filtered names), `'bad_length'`, `'bad_chars'`, or `'network'`.
   Future<String> setUsername(String raw) async {
     final String n = raw.trim().replaceFirst(RegExp(r'^@+'), '');
     if (n.length < 3 || n.length > 20) return 'bad_length';
@@ -318,6 +318,8 @@ class CloudProfileSync {
       return status;
     } catch (e) {
       debugPrint('setUsername failed: $e');
+      final String m = '$e';
+      if (m.contains('username_reserved') || m.contains('username_profane')) return 'taken';
       return 'network';
     }
   }

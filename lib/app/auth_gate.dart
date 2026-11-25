@@ -19,6 +19,7 @@ NxAccess nxAccess({required String authMode, required bool hasUser, required boo
 bool isOnlineOnlyPath(String path) =>
     path == '/social' ||
     path == '/leaderboard' ||
+    path == '/settings/blocked' ||
     path.startsWith('/online/') ||
     path.startsWith('/call/') ||
     path == '/tournaments' ||
@@ -30,13 +31,17 @@ bool isOnlineOnlyPath(String path) =>
 
 const String kSignInRequiredPath = '/signin-required';
 
+/// Pages anyone may open without a session or guest choice: password recovery, the legal texts, the maintenance /
+/// update gate.
+const Set<String> kPublicPaths = <String>{'/forgot-password', '/reset-password', '/legal/privacy', '/legal/terms'};
+
 /// The auth part of the router redirect (pure, so it is unit-tested). Returns null to stay.
 String? authRedirect(Uri u, NxAccess access, {required bool hasIdentity}) {
   final String path = u.path;
   switch (access) {
     case NxAccess.needsAuth:
       // The launch intro may still play; it continues to /auth by itself.
-      if (path == '/auth' || path == '/intro') return null;
+      if (path == '/auth' || path == '/intro' || kPublicPaths.contains(path)) return null;
       return '/auth';
     case NxAccess.signedIn:
       // A session can appear while the sign-in page is open (magic-link deep link, OTP from another tab).

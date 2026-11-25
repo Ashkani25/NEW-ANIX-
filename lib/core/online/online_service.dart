@@ -53,6 +53,8 @@ class OnlineService extends ChangeNotifier {
       final String? tok = s.session?.accessToken;
       if (_games != null) unawaited(_games!.realtime.setAuth(tok));
       if (_social != null) unawaited(_social!.realtime.setAuth(tok));
+      if (s.event == AuthChangeEvent.passwordRecovery) recoveryPending = true;
+      if (s.event == AuthChangeEvent.signedOut) recoveryPending = false;
       if (s.session != null &&
           (s.event == AuthChangeEvent.signedIn || s.event == AuthChangeEvent.initialSession ||
               s.event == AuthChangeEvent.userUpdated)) {
@@ -325,7 +327,7 @@ class OnlineService extends ChangeNotifier {
 
   /// New account with a username and password; the e-mail is optional (only for recovery, never shown to others).
   /// No codes: the session starts right away and persists on the phone until sign-out.
-  Future<bool> signUpUsername(String username, String password, {String? email}) async {
+  Future<bool> signUpUsername(String username, String password, {String? email, String? termsVersion}) async {
     final String u = normalizeUsername(username);
     final String? mail = (email ?? '').trim().isEmpty ? null : email!.trim();
     if (!usernamePattern.hasMatch(u)) {
@@ -348,7 +350,11 @@ class OnlineService extends ChangeNotifier {
       final AuthResponse r = await c.auth.signUp(
         email: mail ?? '$u@$internalDomain',
         password: mail == null ? 'nx#$password' : password,
-        data: <String, dynamic>{'username': u},
+        data: <String, dynamic>{
+          'username': u,
+          if (termsVersion != null) 'terms_version': termsVersion,
+          if (termsVersion != null) 'terms_accepted_at': DateTime.now().toUtc().toIso8601String(),
+        },
       );
       if (r.session == null) {
         // Projects that require e-mail confirmation return no session; sign in right away instead.
@@ -402,12 +408,129 @@ class OnlineService extends ChangeNotifier {
     return ok ?? false;
   }
 
+  // ------------------------------------------------------------------ password reset (P0 #2)
+  /// Deep link of the recovery e-mail (`nexora://login-callback/reset?code=…`). It must be listed in Supabase →
+  /// Authentication → URL Configuration → Redirect URLs. supabase_flutter exchanges the code for a session; the router
+  /// sees the `/reset` path and opens the set-new-password screen.
+  static const String recoveryRedirect = 'nexora://login-callback/reset';
+
+  /// True between a recovery sign-in (e-mail link or recovery code) and the new password being saved; the router keeps
+  /// the user on `/reset-password` until then.
+  bool recoveryPending = false;
+
+  void markRecovery() {
+    if (recoveryPending) return;
+    recoveryPending = true;
+    notifyListeners();
+  }
+
+  /// Sends the recovery e-mail (link + 6-digit code when the template has `{{ .Token }}`).
   Future<bool> resetPassword(String email) async {
+    final String e = email.trim();
+    lastRetryAfter = null;
     final bool? ok = await _run<bool>((SupabaseClient c) async {
-      await c.auth.resetPasswordForEmail(email.trim());
+      await c.auth.resetPasswordForEmail(e, redirectTo: recoveryRedirect);
       return true;
     });
+    if (ok == true) _otpSentAt['reset:${e.toLowerCase()}'] = DateTime.now();
     return ok ?? false;
+  }
+
+  /// Seconds until another recovery e-mail may be requested for [email].
+  int resetCooldownLeft(String email) => otpCooldownLeft('reset:${email.trim()}');
+
+  /// Verifies the recovery code from the e-mail; on success the user is signed in for the reset only.
+  Future<bool> verifyRecoveryCode(String email, String code) async {
+    final String token = normalizeEmailOtpDigits(code);
+    if (!RegExp(r'^\d{6,10}$').hasMatch(token)) {
+      lastError = 'otp_invalid';
+      notifyListeners();
+      return false;
+    }
+    final bool? ok = await _run<bool>((SupabaseClient c) async {
+      await c.auth.verifyOTP(email: email.trim(), token: token, type: OtpType.recovery);
+      return c.auth.currentSession != null;
+    });
+    if (ok == true) markRecovery();
+    return ok ?? false;
+  }
+
+  /// Saves the new password of a recovery session (e-mail accounts store the password as typed).
+  Future<bool> completeRecovery(String newPassword) async {
+    if (newPassword.length < minPasswordLength) {
+      lastError = 'weak_password';
+      notifyListeners();
+      return false;
+    }
+    final bool? ok = await _run<bool>((SupabaseClient c) async {
+      if (c.auth.currentSession == null) throw const AuthException('Auth session missing', code: 'session_missing');
+      final String pw = isInternalAccount ? 'nx#$newPassword' : newPassword;
+      await c.auth.updateUser(UserAttributes(password: pw));
+      return true;
+    });
+    if (ok == true) recoveryPending = false;
+    notifyListeners();
+    return ok ?? false;
+  }
+
+  // ------------------------------------------------------------------ account deletion (P0 #1)
+  /// Permanently deletes the signed-in account on the server (`nx_delete_account`, both projects through the bridge).
+  ///
+  /// [password] is the account password when it has one (username accounts store it with the `nx#` prefix, added
+  /// here). Returns null on success, otherwise an error key: confirm_required, wrong_password, owner_cannot_delete,
+  /// rate_limited, not_signed_in, network or the server message.
+  /// Order: validate (dry run) -> remove own storage files through the Storage API -> delete for real -> local sign-out.
+  Future<String?> deleteAccount({String? password}) async {
+    final SupabaseClient? c = client;
+    if (c == null || c.auth.currentSession == null || isGuest) return 'not_signed_in';
+    final String? pw = (password == null || password.isEmpty) ? null : (isInternalAccount ? 'nx#$password' : password);
+    Future<String?> call(bool dry) async {
+      final dynamic r = await c.rpc('nx_delete_account',
+          params: <String, dynamic>{'p_confirm': 'DELETE', 'p_password': pw, 'p_dry_run': dry});
+      if (r is Map && r['ok'] == true) return null;
+      return r is Map ? (r['error'] as String? ?? 'failed') : 'failed';
+    }
+
+    busy = true;
+    notifyListeners();
+    try {
+      final String? check = await call(true);
+      if (check != null) return check;
+      try {
+        final dynamic files = await c.rpc('nx_my_storage_objects');
+        final Map<String, List<String>> byBucket = <String, List<String>>{};
+        if (files is List) {
+          for (final dynamic f in files) {
+            if (f is Map && f['bucket'] is String && f['path'] is String) {
+              byBucket.putIfAbsent(f['bucket'] as String, () => <String>[]).add(f['path'] as String);
+            }
+          }
+        }
+        for (final MapEntry<String, List<String>> e in byBucket.entries) {
+          try {
+            await c.storage.from(e.key).remove(e.value);
+          } catch (err) {
+            debugPrint('delete account storage ${e.key}: $err');
+          }
+        }
+      } catch (err) {
+        debugPrint('delete account storage list: $err');
+      }
+      final String? done = await call(false);
+      if (done != null) return done;
+      try {
+        await c.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {}
+      _helloFor = null;
+      return null;
+    } catch (e) {
+      final String m = '$e';
+      if (m.contains('rate_limited')) return 'rate_limited';
+      return _friendly(e);
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
   }
 
   /// Sign out. Guest mode is local-only and never creates an anonymous session.

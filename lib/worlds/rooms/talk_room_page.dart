@@ -26,6 +26,7 @@ import '../../games/finger_soccer/core/bm_engine.dart';
 import '../../games/game_registry.dart';
 import '../arcade/online/online_match_page.dart';
 import '../nova_gallery/ui/nova_follow.dart';
+import '../../core/safety/safety_actions.dart';
 
 /// A ROOM is a conversation first: a voice stage (LiveKit, unlimited speakers and listeners), a text chat and the
 /// member list. Its manager can pick a game, tick the players, and start; picked players choose their team and
@@ -994,23 +995,7 @@ class _TalkRoomPageState extends ConsumerState<TalkRoomPage> {
           TextButton.icon(
             onPressed: () async {
               Navigator.pop(ctx);
-              final String? reason = await showLuxePrompt(
-                context,
-                title: context.tx('گزارش ${m.name}', 'Report ${m.name}'),
-                hint: context.tx('چه اتفاقی افتاد؟', 'What happened?'),
-                confirm: context.tx('ارسال', 'Send'),
-                maxLength: 300,
-              );
-              if (reason != null && reason.trim().length >= 2) {
-                try {
-                  await ref.read(onlineProvider).rpc('nx_report_user', <String, dynamic>{
-                    'p_target': m.userId, 'p_kind': 'room', 'p_target_id': widget.roomId, 'p_reason': reason.trim(),
-                  });
-                  if (mounted) {
-                    luxeToast(context, context.tx('گزارش برای مدیران فرستاده شد', 'Report sent to the admins'));
-                  }
-                } catch (_) {}
-              }
+              await reportContent(context, targetUser: m.userId, kind: 'room', targetId: widget.roomId, label: m.name);
             },
             icon: const Icon(Icons.flag_rounded, color: Luxe.mute, size: 18),
             label: Text(context.tx('گزارش تخلف', 'Report'), style: const TextStyle(color: Luxe.mute)),

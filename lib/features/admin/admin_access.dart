@@ -206,6 +206,8 @@ class AdminApi {
       _auth('nx_admin_rename', <String, dynamic>{'p_user': user, 'p_name': name, 'p_reason': reason});
   Future<Map<String, dynamic>> resetPassword(String user, String temp) =>
       _auth('nx_admin_reset_password', <String, dynamic>{'p_user': user, 'p_temp': temp});
+  Future<Map<String, dynamic>> clientErrors() =>
+      _auth('nx_admin_client_errors', <String, dynamic>{'p_limit': 150});
   Future<Map<String, dynamic>> reports(String status) =>
       _auth('nx_admin_reports', <String, dynamic>{'p_status': status, 'p_limit': 150});
   Future<Map<String, dynamic>> setReport(int id, String status, String? note) =>

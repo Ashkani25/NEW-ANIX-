@@ -7,6 +7,8 @@ import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'build_flavor.dart';
+
 /// In-app updater for THIS app only (Flutter redesign line).
 ///
 /// Reads releases of ashkandevloper-code/cocos-c- and keeps only tags `anix-<n>` (prerelease or full release)
@@ -32,6 +34,9 @@ class AppUpdater extends ChangeNotifier {
   static const String apkName = 'ANIX-universal.apk';
   static const MethodChannel _ch = MethodChannel('nexora/updater');
 
+  /// Whether this build may update itself from GitHub releases (sideload builds only; store builds never do).
+  static const bool sideloadEnabled = !BuildFlavor.isStoreBuild;
+
   AppRelease? available;
   double? progress; // null = not downloading
   String? error;
@@ -41,7 +46,7 @@ class AppUpdater extends ChangeNotifier {
   bool _checking = false;
 
   void start() {
-    if (!Platform.isAndroid || currentVc <= 0) return;
+    if (!sideloadEnabled || !Platform.isAndroid || currentVc <= 0) return;
     unawaited(check());
     _life ??= AppLifecycleListener(onResume: () => unawaited(check()));
     _timer ??= Timer.periodic(const Duration(minutes: 30), (_) => check());
@@ -120,6 +125,7 @@ class AppUpdater extends ChangeNotifier {
   }
 
   Future<void> downloadAndInstall() async {
+    if (!sideloadEnabled) return;
     final AppRelease? r = available;
     if (r == null || progress != null) return;
     progress = 0;
