@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/profile/profile_service.dart';
+import '../../../core/safety/safety_actions.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../core/theme/nx_theme.dart';
 import '../models/nova_models.dart';
@@ -74,6 +75,14 @@ class _NovaStoryViewerState extends ConsumerState<NovaStoryViewer> with SingleTi
     await ref.read(novaControllerProvider).deleteStory(s.id);
     if (!mounted) return;
     Navigator.of(context).maybePop();
+  }
+
+  /// Report someone else's story; the story pauses while the dialog is open.
+  Future<void> _report(NovaStory s) async {
+    _progress.stop();
+    await reportContent(context,
+        targetUser: reportableUserId(s.authorId), kind: 'story', targetId: s.id, label: s.authorName, excerpt: s.text);
+    if (mounted) _progress.forward();
   }
 
   @override
@@ -183,6 +192,12 @@ class _NovaStoryViewerState extends ConsumerState<NovaStoryViewer> with SingleTi
                       tooltip: context.tx('حذف استوری', 'Delete story'),
                       icon: const Icon(Icons.delete_outline_rounded, color: Colors.white),
                       onPressed: () => _delete(s),
+                    )
+                  else
+                    IconButton(
+                      tooltip: context.tx('گزارش استوری', 'Report story'),
+                      icon: const Icon(Icons.flag_outlined, color: Colors.white),
+                      onPressed: () => _report(s),
                     ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded, color: Colors.white),

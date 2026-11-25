@@ -12,6 +12,7 @@ import '../../../core/online/match_link.dart';
 import '../../../core/online/online_service.dart';
 import '../../../core/online/room_voice.dart';
 import '../../../core/profile/profile_service.dart';
+import '../../../core/safety/safety_actions.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../core/theme/nx_theme.dart';
 import '../../../games/game_registry.dart';
@@ -518,6 +519,26 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
                 style: const TextStyle(color: NxColors.gold, fontSize: 12)),
           ),
         const SizedBox(height: 22),
+        if (_link != null && _link!.seatCount > 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: TextButton.icon(
+              onPressed: () {
+                final SupabaseMatchLink l = _link!;
+                reportMatchPlayer(context,
+                    matchId: widget.matchId,
+                    myId: OnlineService.current?.uid,
+                    game: l.game,
+                    players: <(String, String)>[
+                      for (int i = 0; i < l.playerIds.length; i++)
+                        if (i != l.mySeat) (l.playerIds[i], i < l.names.length ? l.names[i] : 'Pilot ${i + 1}'),
+                    ]);
+              },
+              icon: const Icon(Icons.flag_outlined, size: 18, color: NxColors.textDim),
+              label: Text(context.tx('گزارش بازیکن', 'Report a player'),
+                  style: const TextStyle(color: NxColors.textDim)),
+            ),
+          ),
         FilledButton.icon(
           onPressed: () => Navigator.of(context).pop(),
           icon: Icon(widget.tournamentMatchId != null

@@ -124,6 +124,9 @@ class _AuthPageState extends ConsumerState<AuthPage> {
         return context.tx('رمز ضعیف است (حداقل ۸ نویسه).', 'Password too weak (at least 8 characters).');
       case 'rate_limit':
         return context.tx('تلاش زیاد بود؛ کمی صبر کن.', 'Too many attempts; wait a moment.');
+      case 'banned':
+        return context.tx('این حساب یا این دستگاه به‌خاطر نقض قوانین مسدود شده است.',
+            'This account or this device is banned for breaking the rules.');
       case 'signup_disabled':
         return context.tx('ثبت‌نام حساب تازه روی سرور بسته است.', 'New sign-ups are disabled on the server.');
       case 'not_configured':

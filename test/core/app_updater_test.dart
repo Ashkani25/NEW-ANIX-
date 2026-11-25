@@ -35,4 +35,20 @@ void main() {
     expect(r?.vc, 70);
     expect(r?.notes, '## ✨ Hi\n\n- one');
   });
+
+  test('reads the app repository Ashkani25/NEW-ANIX- (old repositories are gone)', () {
+    expect(AppUpdater.repo, 'Ashkani25/NEW-ANIX-');
+    expect(AppUpdater.releasesApi.toString(), 'https://api.github.com/repos/Ashkani25/NEW-ANIX-/releases?per_page=40');
+    expect(AppUpdater.releasesApi.toString(), isNot(contains('cocos-c-')));
+    expect(AppUpdater.releasesApi.toString(), isNot(contains('nexora-universe')));
+  });
+
+  test('anix-v1.0.N tags of the workflow are picked by their vc= marker', () {
+    final AppRelease? r = AppUpdater.pickBest(<dynamic>[
+      rel('anix-v1.0.3', 'notes\n<sub>vc=303 · abc</sub>'),
+      rel('anix-v1.0.4', 'notes\n<sub>vc=304 · def</sub>'),
+    ], 303);
+    expect(r?.vc, 304);
+    expect(r?.tag, 'anix-v1.0.4');
+  });
 }

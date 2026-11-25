@@ -2,6 +2,8 @@
 // POST { username, password } -> GoTrue session JSON (same shape as /auth/v1/token?grant_type=password).
 // Internal accounts (<username>@users.nexora.invalid, password prefixed "nx#") are tried first,
 // then the account whose profile currently owns that username (supporting renamed internal accounts as well).
+// Optional { install }: the app's random install id. When a banned account was deleted on that install (ban-evasion
+// hold, nx_install_held), the login is refused with 403 user_banned before any password is tried.
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -39,6 +41,21 @@ async function throttle(ip: string, username: string): Promise<{ ok: boolean; re
   }
 }
 
+/// Ban-evasion hold on this install id (P0 #7c). Fails open: the sign-up / username / e-mail checks stay server-side.
+async function installHeld(install: string): Promise<boolean> {
+  if (!/^[a-z0-9-]{16,80}$/.test(install)) return false;
+  try {
+    const r = await fetch(`${URL_}/rest/v1/rpc/nx_install_held`, {
+      method: "POST",
+      headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_install: install }),
+    });
+    return r.ok && (await r.json()) === true;
+  } catch {
+    return false;
+  }
+}
+
 async function grant(email: string, password: string, ip: string) {
   const r = await fetch(`${URL_}/auth/v1/token?grant_type=password`, {
     method: "POST",
@@ -51,11 +68,12 @@ async function grant(email: string, password: string, ip: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error_code: "method_not_allowed" }, 405);
-  let username = "", password = "";
+  let username = "", password = "", install = "";
   try {
     const b = await req.json();
     username = String(b.username ?? "").trim().toLowerCase();
     password = String(b.password ?? "");
+    install = String(b.install ?? "").trim().toLowerCase().slice(0, 80);
   } catch { /* fallthrough */ }
   if (!/^[a-z0-9_.]{2,24}$/.test(username) || password.length < 6 || password.length > 128) {
     return json({ error_code: "invalid_credentials", msg: "Invalid login credentials" }, 400);
@@ -67,6 +85,9 @@ Deno.serve(async (req) => {
       status: 429,
       headers: { ...cors, "Content-Type": "application/json", "Retry-After": String(t.retry_after ?? 60) },
     });
+  }
+  if (install && await installHeld(install)) {
+    return json({ error_code: "user_banned", msg: "User is banned" }, 403);
   }
   // 1) internal username account matching initial signup handle
   let r = await grant(`${username}@users.nexora.invalid`, "nx#" + password, ip);

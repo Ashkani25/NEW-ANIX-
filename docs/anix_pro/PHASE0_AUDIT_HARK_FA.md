@@ -38,6 +38,6 @@
 - امضای Production + AAB + جداسازی Debug/Release.
 
 ## نیاز از مالک پروژه
-1. دسترسی به مخزن GitHub (Ashimashi74/nexora-universe) یا تأیید اینکه خروجی به‌صورت patch/zip تحویل شود.
+1. دسترسی به مخزن GitHub (Ashkani25/NEW-ANIX- (پیش‌تر Ashimashi74/nexora-universe)) یا تأیید اینکه خروجی به‌صورت patch/zip تحویل شود.
 2. یک پروژه Supabase Staging (نه Production) برای اجرای Migrationها.
 3. تصمیم برند نهایی: NEXORA یا ANIX.
