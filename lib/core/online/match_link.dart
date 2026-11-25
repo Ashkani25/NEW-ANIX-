@@ -99,7 +99,7 @@ int absenceLimitSec({required bool onTurn, int? graceSec}) => graceSec ?? (onTur
 /// * Ordered log: table nx_match_moves (insert through RPC nx_push_move, seq = last+1).
 /// * Delivery: Realtime postgres_changes + a catch-up poll (never misses a move).
 /// * Presence + ephemeral 'live' messages: Realtime channel `nxm:<matchId>`.
-class SupabaseMatchLink extends ChangeNotifier implements NetLink {
+class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLink {
   SupabaseMatchLink._(this._c, this.matchId, this._uid, Map<String, dynamic> m, {MatchBackend? backend})
       : _b = backend ?? _SupabaseBackend(_c!, matchId) {
     _players = (m['players'] as List<dynamic>).map((dynamic e) => '$e').toList();
@@ -650,16 +650,20 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink {
     unawaited(ch.sendBroadcastMessage(event: 'live', payload: <String, dynamic>{'s': mySeat, 'e': event, 'd': data}));
   }
 
+  /// Retired: secrets are written by the server only (nx_put_secret refuses every call).
   @override
-  Future<void> putSecret(int seat, String slot, Map<String, dynamic> data) async {
-    if (seat < 0 || seat >= seatCount) return;
-    await _c?.rpc('nx_put_secret', params: <String, dynamic>{
-      'p_match': matchId,
-      'p_user': _players[seat],
-      'p_slot': slot,
-      'p_data': data,
-    });
+  Future<void> putSecret(int seat, String slot, Map<String, dynamic> data) async {}
+
+  @override
+  Future<Map<String, dynamic>> act(Map<String, dynamic> action) async {
+    final SupabaseClient? c = _c;
+    if (c == null || isOver) return <String, dynamic>{'ok': false, 'reason': 'over'};
+    final dynamic r = await c.rpc('nx_hg_act', params: <String, dynamic>{'p_match': matchId, 'p_act': action});
+    return r is Map ? Map<String, dynamic>.from(r) : <String, dynamic>{'ok': false, 'reason': 'bad_reply'};
   }
+
+  @override
+  Future<Map<String, dynamic>?> readView() => readSecret('view');
 
   @override
   Future<Map<String, dynamic>?> readSecret(String slot) async {

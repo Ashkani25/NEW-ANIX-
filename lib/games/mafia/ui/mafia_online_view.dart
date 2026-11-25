@@ -1,21 +1,20 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nexora/core/theme/nx_theme.dart';
 import 'package:nexora/core/widgets/nx_widgets.dart';
 import 'package:nexora/games/core/game_contract.dart';
+import 'package:nexora/games/core/server_game.dart';
 
-import '../core/mafia_engine.dart';
 import '../core/mafia_models.dart';
 
 enum _Stage { intro, night, nominate, finalVote, over }
 
-/// Online Mafia: every phone runs the same seeded [MafiaEngine] (same roles, same rules as the
-/// offline game) and applies the same ordered inputs: ready, night actions, nomination and final
-/// votes. Each phone only shows what its own player may know ([MafiaEngine.visibleRole], private log).
-/// Day discussion is a live chat between the phones.
+/// Online Mafia, server-authoritative: the server deals the roles, keeps every secret (roles, night actions, the
+/// Detective's results, the Mafia-only chat), validates each input and resolves nights, votes and the winner.
+/// This phone only renders its own player's view (nx_match_secrets 'view') and sends inputs through nx_hg_act;
+/// it never learns a role it may not know, so a modified client has nothing to read.
 class MafiaOnlineView extends StatefulWidget {
   const MafiaOnlineView({super.key, required this.launch});
   final GameLaunch launch;
@@ -25,256 +24,124 @@ class MafiaOnlineView extends StatefulWidget {
 }
 
 class _MafiaOnlineViewState extends State<MafiaOnlineView> {
-  late final MafiaEngine _e;
   late final NetLink _net;
-  NetInbox? _inbox;
-  StreamSubscription<NetLiveMessage>? _liveSub;
-  bool _ready = false; // replay finished
-
-  _Stage _stage = _Stage.intro;
-  final Set<int> _readySeats = <int>{};
-  final Map<int, int?> _night = <int, int?>{}; // role key (seat) -> target
-  final Map<int, int?> _votes = <int, int?>{};
-  List<int> _defendants = <int>[];
-  final Set<int> _out = <int>{};
-  final List<_Chat> _chat = <_Chat>[];
+  late final ServerGameSync _sync;
+  Map<String, dynamic>? _v;
   final TextEditingController _msg = TextEditingController();
-  DateTime _stageSince = DateTime.now();
   bool _finished = false;
+  bool _sending = false;
   int? _pick;
+  _Stage? _lastStage;
+  int _lastDay = 0;
+  Timer? _clock;
 
   GameLaunch get _l => widget.launch;
   int get _me => _net.mySeat;
-  MafiaPlayer get _mine => _e.player(_me);
 
   @override
   void initState() {
     super.initState();
     _net = _l.net!;
-    _e = MafiaEngine.create(
-      names: List<String>.generate(_net.seatCount, (int i) => _l.netName(i) ?? 'Pilot ${i + 1}'),
-      config: const MafiaConfig(),
-      rng: Random(_net.seed),
-    );
-    final NetInbox inbox = NetInbox(_onNet);
-    _inbox = inbox;
-    _net.listen(inbox.add,
-        onReplayDone: () => inbox.add(const NetMove(seq: -1, seat: -1, kind: 'replayDone', data: <String, dynamic>{})));
-    _liveSub = _net.live.listen(_onLive);
+    _sync = ServerGameSync(_net, onView: _onView)..start();
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _v != null) setState(() {});
+    });
   }
 
   @override
   void dispose() {
-    _inbox?.close();
-    _liveSub?.cancel();
+    _clock?.cancel();
+    _sync.dispose();
     _msg.dispose();
     super.dispose();
   }
 
-  // ------------------------------------------------------------------ rules glue
-  int? get _mafiaLead {
-    final MafiaPlayer? gf = _e.aliveHolderOf(MafiaRole.godfather);
-    if (gf != null) return gf.id;
-    for (final MafiaPlayer p in _e.players) {
-      if (p.alive && p.isMafia) return p.id;
+  // ------------------------------------------------------------------ view
+  _Stage get _stage => switch ('${_v?['stage']}') {
+        'night' => _Stage.night,
+        'nominate' => _Stage.nominate,
+        'final' => _Stage.finalVote,
+        'over' => _Stage.over,
+        _ => _Stage.intro,
+      };
+  int get _day => vInt(_v?['day']) ?? 1;
+  MafiaRole? _role(dynamic r) => r is String && MafiaRole.values.any((MafiaRole x) => x.name == r) ? MafiaRole.values.byName(r) : null;
+  MafiaRole get _myRole => _role(_v?['role']) ?? MafiaRole.citizen;
+  bool get _alive => _v?['alive'] == true;
+  List<Map<String, dynamic>> get _players => vMaps(_v?['players']);
+  List<int>? get _legal => _v?['legal'] is List ? vInts(_v?['legal']) : null;
+  bool get _acted => _v?['acted'] == true;
+  List<int> get _waiting => vInts(_v?['waiting']);
+  List<int> get _defs => vInts(_v?['defs']);
+  MafiaTeam? get _winner => switch ('${_v?['winner']}') { 'town' => MafiaTeam.town, 'mafia' => MafiaTeam.mafia, _ => null };
+
+  String _name(int s) {
+    for (final Map<String, dynamic> p in _players) {
+      if (vInt(p['s']) == s) return '${p['name'] ?? _l.netName(s) ?? 'Pilot ${s + 1}'}';
+    }
+    return _l.netName(s) ?? 'Pilot ${s + 1}';
+  }
+
+  MafiaRole? _roleOf(int s) {
+    for (final Map<String, dynamic> p in _players) {
+      if (vInt(p['s']) == s) return _role(p['role']);
     }
     return null;
   }
 
-  /// Seats that must act tonight (role holders alive and still in the match).
-  List<int> get _nightActors {
-    final List<int> out = <int>[];
-    final int? lead = _mafiaLead;
-    if (lead != null) out.add(lead);
-    for (final MafiaRole r in <MafiaRole>[MafiaRole.doctor, MafiaRole.detective, MafiaRole.sniper]) {
-      final MafiaPlayer? h = _e.aliveHolderOf(r);
-      if (h == null) continue;
-      if (r == MafiaRole.sniper && _e.sniperBullets <= 0) continue;
-      out.add(h.id);
-    }
-    return out;
-  }
-
-  List<int> get _voters => _e.aliveIds;
-
-  void _setStage(_Stage s) {
-    _stage = s;
-    _stageSince = DateTime.now();
-    _pick = null;
-    _votes.clear();
-    _night.clear();
-  }
-
-  void _maybeAdvance() {
-    if (_e.isOver) {
-      _stage = _Stage.over;
-      return;
-    }
-    switch (_stage) {
-      case _Stage.intro:
-        if (_net.seatCount > 0 && _e.players.every((MafiaPlayer p) => _readySeats.contains(p.id) || !p.alive)) {
-          _setStage(_Stage.night);
-        }
-      case _Stage.night:
-        if (_nightActors.every(_night.containsKey)) {
-          final int? lead = _mafiaLead;
-          final MafiaPlayer? doc = _e.aliveHolderOf(MafiaRole.doctor);
-          final MafiaPlayer? det = _e.aliveHolderOf(MafiaRole.detective);
-          final MafiaPlayer? sn = _e.aliveHolderOf(MafiaRole.sniper);
-          _e.resolveNight(NightActions(
-            mafiaTarget: lead == null ? null : _night[lead],
-            doctorSave: doc == null ? null : _night[doc.id],
-            detectiveCheck: det == null ? null : _night[det.id],
-            sniperTarget: sn == null ? null : _night[sn.id],
-          ));
-          _setStage(_e.isOver ? _Stage.over : _Stage.nominate);
-        }
-      case _Stage.nominate:
-        if (_voters.every(_votes.containsKey)) {
-          final NominationResult r = _e.tallyNomination(Map<int, int?>.from(_votes));
-          if (r.defendants.isEmpty) {
-            _e.startNight();
-            _setStage(_Stage.night);
-          } else {
-            final List<int> d = r.defendants;
-            _setStage(_Stage.finalVote);
-            _defendants = d;
-          }
-        }
-      case _Stage.finalVote:
-        if (_voters.every(_votes.containsKey)) {
-          _e.resolveFinalVote(Map<int, int?>.from(_votes), _defendants);
-          _defendants = <int>[];
-          if (_e.isOver) {
-            _setStage(_Stage.over);
-          } else {
-            _e.startNight();
-            _setStage(_Stage.night);
-          }
-        }
-      case _Stage.over:
-        break;
-    }
-  }
-
-  void _apply(NetMove m) {
-    if (m.isForfeit) {
-      final int s = (m.data['seat'] as num?)?.toInt() ?? m.seat;
-      if (_out.add(s)) _e.leave(s);
-      _night.remove(s);
-      _votes.remove(s);
-      _maybeAdvance();
-      return;
-    }
-    final String a = '${m.data['a']}';
-    final int? t = (m.data['t'] as num?)?.toInt();
-    final int day = (m.data['d'] as num?)?.toInt() ?? -1;
-    switch (a) {
-      case 'ready':
-        if (_stage == _Stage.intro) _readySeats.add(m.seat);
-      case 'night':
-        if (_stage == _Stage.night && day == _e.day && _nightActors.contains(m.seat)) _night[m.seat] = t;
-      case 'nom':
-        if (_stage == _Stage.nominate && day == _e.day && _e.player(m.seat).alive) _votes[m.seat] = t;
-      case 'final':
-        if (_stage == _Stage.finalVote && day == _e.day && _e.player(m.seat).alive) _votes[m.seat] = t;
-    }
-    _maybeAdvance();
-  }
-
-  Future<void> _onNet(NetMove m) async {
+  void _onView(Map<String, dynamic> v) {
     if (!mounted) return;
-    if (m.kind == 'replayDone') {
-      _ready = true;
-      setState(() {});
-      _checkOver();
-      return;
-    }
-    final _Stage before = _stage;
-    final int dayBefore = _e.day;
-    _apply(m);
-    if (m.replay) return;
-    if (_stage != before || _e.day != dayBefore) {
+    setState(() => _v = v);
+    if (_lastStage != null && (_stage != _lastStage || _day != _lastDay)) {
+      _pick = null;
       if (_l.soundOn) HapticFeedback.mediumImpact();
     }
-    setState(() {});
+    _lastStage = _stage;
+    _lastDay = _day;
+    _net.turnSeat = null;
     _checkOver();
   }
 
-  void _send(String a, {int? t}) {
-    final Map<String, dynamic> d = <String, dynamic>{'a': a, 'd': _e.day, 't': t};
-    _net.send(d);
-    _apply(NetMove(seq: 0, seat: _me, kind: 'move', data: d));
-    setState(() {});
-    _checkOver();
+  Future<void> _send(String a, {int? t}) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    final Map<String, dynamic> r = await _sync.act(<String, dynamic>{'a': a, 'd': _day, 't': t});
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (r['ok'] != true && r['reason'] != 'rate') {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(_t('ثبت نشد، دوباره تلاش کن.', 'Not accepted, try again.'))));
+    }
   }
 
   void _checkOver() {
-    if (!_e.isOver || _finished) return;
+    final MafiaTeam? w = _winner;
+    if (w == null || _finished) return;
     _finished = true;
-    final MafiaTeam w = _e.winner!;
-    final List<int> winners = <int>[for (final MafiaPlayer p in _e.players) if (p.role.team == w) p.id];
-    final bool won = _mine.role.team == w;
+    final List<int> winners = <int>[
+      for (final Map<String, dynamic> p in _players)
+        if (_role(p['role'])?.team == w && p['out'] != true) vInt(p['s'])!,
+    ];
+    final bool won = _myRole.team == w && winners.contains(_me);
     Future<void>.delayed(const Duration(milliseconds: 2400), () {
       if (!mounted) return;
       _l.onFinish(GameResult(
         outcome: won ? GameOutcome.win : GameOutcome.loss,
         winnerSeats: winners,
-        summaryFa: '${teamLabel(w, true)} پیروز شد. نقش تو: ${_mine.role.labelFa}.',
-        summaryEn: '${teamLabel(w, false)} won. Your role: ${_mine.role.labelEn}.',
+        summaryFa: '${teamLabel(w, true)} پیروز شد. نقش تو: ${_myRole.labelFa}.',
+        summaryEn: '${teamLabel(w, false)} won. Your role: ${_myRole.labelEn}.',
       ));
     });
   }
 
-  void _onLive(NetLiveMessage m) {
-    if (!mounted || m.event != 'chat') return;
-    final String text = '${m.data['t'] ?? ''}'.trim();
-    if (text.isEmpty || m.seat < 0 || m.seat >= _e.playerCount) return;
-    final bool mafiaOnly = m.data['m'] == true;
-    if (mafiaOnly && !_mine.isMafia) return;
-    setState(() {
-      _chat.add(_Chat(m.seat, text.length > 240 ? text.substring(0, 240) : text, mafiaOnly));
-      if (_chat.length > 80) _chat.removeAt(0);
-    });
-  }
-
-  void _sendChat() {
+  Future<void> _sendChat() async {
     final String t = _msg.text.trim();
-    if (t.isEmpty || !_mine.alive) return;
-    final bool mafiaOnly = _stage == _Stage.night && _mine.isMafia;
-    if (_stage == _Stage.night && !mafiaOnly) return;
-    _net.sendLive('chat', <String, dynamic>{'t': t, 'm': mafiaOnly});
-    setState(() {
-      _chat.add(_Chat(_me, t, mafiaOnly));
-      _msg.clear();
-    });
-  }
-
-  /// Authority: players who are present but idle for too long are skipped (counted as "no choice").
-  void _skipIdle() {
-    final List<int> waiting = _waitingOn();
-    for (final int s in waiting) {
-      if (s == _me) continue;
-      final String a = _stage == _Stage.night ? 'night' : (_stage == _Stage.nominate ? 'nom' : 'final');
-      final Map<String, dynamic> d = <String, dynamic>{'a': a, 'd': _e.day, 't': null};
-      _net.send(d, kind: 'timeout', asSeat: s);
-      _apply(NetMove(seq: 0, seat: s, kind: 'timeout', data: d));
-    }
-    setState(() {});
-    _checkOver();
-  }
-
-  List<int> _waitingOn() {
-    switch (_stage) {
-      case _Stage.intro:
-        return <int>[for (final MafiaPlayer p in _e.players) if (p.alive && !_readySeats.contains(p.id)) p.id];
-      case _Stage.night:
-        return _nightActors.where((int s) => !_night.containsKey(s)).toList();
-      case _Stage.nominate:
-      case _Stage.finalVote:
-        return _voters.where((int s) => !_votes.containsKey(s)).toList();
-      case _Stage.over:
-        return <int>[];
+    if (t.isEmpty || !_alive) return;
+    if (_stage == _Stage.night && !_myRole.isMafia) return;
+    _msg.clear();
+    final Map<String, dynamic> r = await _sync.act(<String, dynamic>{'a': 'chat', 't': t});
+    if (!mounted) return;
+    if (r['ok'] != true && r['reason'] == 'rate') {
+      _msg.text = t;
     }
   }
 
@@ -288,7 +155,7 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
       palette: night ? WorldPalette.oracle : WorldPalette.social,
       stars: _l.fancyEffects,
       child: SafeArea(
-        child: !_ready
+        child: _v == null
             ? const Center(child: CircularProgressIndicator())
             : Column(children: <Widget>[
                 const SizedBox(height: 8),
@@ -307,7 +174,7 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
                     const SizedBox(height: 16),
                   ]),
                 ),
-                if (_mine.alive && _stage != _Stage.over && (_stage != _Stage.night || _mine.isMafia)) _chatInput(),
+                if (_alive && _stage != _Stage.over && (_stage != _Stage.night || _myRole.isMafia)) _chatInput(),
               ]),
       ),
     );
@@ -316,26 +183,33 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
   Widget _header() {
     final String phase = switch (_stage) {
       _Stage.intro => _t('آشنایی با نقش‌ها', 'Meet your role'),
-      _Stage.night => _t('شب ${_e.day}', 'Night ${_e.day}'),
-      _Stage.nominate => _t('روز ${_e.day} · رأی‌گیری اول', 'Day ${_e.day} · nomination'),
-      _Stage.finalVote => _t('روز ${_e.day} · رأی نهایی', 'Day ${_e.day} · final vote'),
+      _Stage.night => _t('شب $_day', 'Night $_day'),
+      _Stage.nominate => _t('روز $_day · رأی‌گیری اول', 'Day $_day · nomination'),
+      _Stage.finalVote => _t('روز $_day · رأی نهایی', 'Day $_day · final vote'),
       _Stage.over => _t('پایان بازی', 'Game over'),
     };
+    final int alive = _players.where((Map<String, dynamic> p) => p['alive'] == true).length;
+    final Duration? left = _stage == _Stage.over ? null : _sync.remaining;
     return Row(children: <Widget>[
       Icon(_stage == _Stage.night ? Icons.nightlight_round : Icons.wb_sunny_rounded,
           color: _stage == _Stage.night ? NxColors.goldDeep : NxColors.gold),
       const SizedBox(width: 8),
       Expanded(child: Text(phase, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
-      NxPill(label: '${_e.aliveCount}/${_e.playerCount}', icon: Icons.people_alt_rounded, color: NxColors.turquoise),
+      if (left != null) ...<Widget>[
+        NxPill(label: '${left.inSeconds}s', icon: Icons.timer_outlined, color: NxColors.gold),
+        const SizedBox(width: 6),
+      ],
+      NxPill(label: '$alive/${_players.length}', icon: Icons.people_alt_rounded, color: NxColors.turquoise),
     ]);
   }
 
   Widget _roleCard() {
-    final MafiaRole r = _mine.role;
+    final MafiaRole r = _myRole;
     final List<String> partners = <String>[
-      for (final MafiaPlayer p in _e.players)
-        if (p.id != _me && _mine.isMafia && p.isMafia) '${p.name} (${_t(p.role.labelFa, p.role.labelEn)})',
+      for (final int s in vInts(_v?['partners']))
+        '${_name(s)} (${_t(_roleOf(s)?.labelFa ?? '', _roleOf(s)?.labelEn ?? '')})',
     ];
+    final Map<String, dynamic> det = _v?['det'] is Map ? Map<String, dynamic>.from(_v!['det'] as Map) : <String, dynamic>{};
     return GlassPanel(
       borderColor: (r.isMafia ? NxColors.danger : NxColors.turquoise).withValues(alpha: 0.6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
@@ -344,7 +218,7 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
           const SizedBox(width: 8),
           Text(_t('نقش تو: ${r.labelFa}', 'Your role: ${r.labelEn}'), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
           const Spacer(),
-          if (!_mine.alive) NxPill(label: _t('حذف شده', 'Out'), icon: Icons.close_rounded, color: NxColors.danger),
+          if (!_alive) NxPill(label: _t('حذف شده', 'Out'), icon: Icons.close_rounded, color: NxColors.danger),
         ]),
         const SizedBox(height: 6),
         Text(_t(r.descFa, r.descEn), style: const TextStyle(color: NxColors.textDim, fontSize: 12, height: 1.5)),
@@ -353,39 +227,36 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
           Text(_t('هم‌تیمی‌ها: ${partners.join('، ')}', 'Partners: ${partners.join(', ')}'),
               style: const TextStyle(color: NxColors.danger, fontSize: 12, fontWeight: FontWeight.w700)),
         ],
-        if (r == MafiaRole.detective && _e.detectiveResults.isNotEmpty) ...<Widget>[
+        if (r == MafiaRole.detective && det.isNotEmpty) ...<Widget>[
           const SizedBox(height: 6),
-          for (final MapEntry<int, bool> en in _e.detectiveResults.entries)
+          for (final MapEntry<String, dynamic> en in det.entries)
             Text(
-              _t('استعلام ${_e.player(en.key).name}: ${en.value ? 'مافیا' : 'بی‌گناه'}',
-                  'Check ${_e.player(en.key).name}: ${en.value ? 'Mafia' : 'innocent'}'),
-              style: TextStyle(color: en.value ? NxColors.danger : NxColors.success, fontSize: 12),
+              _t('استعلام ${_name(int.tryParse(en.key) ?? 0)}: ${en.value == true ? 'مافیا' : 'بی‌گناه'}',
+                  'Check ${_name(int.tryParse(en.key) ?? 0)}: ${en.value == true ? 'Mafia' : 'innocent'}'),
+              style: TextStyle(color: en.value == true ? NxColors.danger : NxColors.success, fontSize: 12),
             ),
+        ],
+        if (r == MafiaRole.sniper && vInt(_v?['bullets']) != null) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(_t('گلوله: ${vInt(_v?['bullets'])}', 'Bullets: ${vInt(_v?['bullets'])}'),
+              style: const TextStyle(color: NxColors.gold, fontSize: 12)),
         ],
       ]),
     );
   }
 
   Widget _actionPanel() {
-    final List<int> waiting = _waitingOn();
-    final bool idleLong = DateTime.now().difference(_stageSince).inSeconds > 120;
+    final List<int> waiting = _waiting;
     final Widget waitLine = Text(
       waiting.isEmpty
           ? ''
-          : _t('در انتظار: ${waiting.map((int s) => _e.player(s).name).join('، ')}',
-              'Waiting for: ${waiting.map((int s) => _e.player(s).name).join(', ')}'),
+          : _t('در انتظار: ${waiting.map(_name).join('، ')}', 'Waiting for: ${waiting.map(_name).join(', ')}'),
       style: const TextStyle(color: NxColors.textDim, fontSize: 12),
     );
-    final Widget skip = _net.isAuthority && idleLong && waiting.any((int s) => s != _me)
-        ? TextButton.icon(
-            onPressed: _skipIdle,
-            icon: const Icon(Icons.fast_forward_rounded),
-            label: Text(_t('رد کردن بازیکنان غایب', 'Skip idle players')),
-          )
-        : const SizedBox.shrink();
+    final List<int>? legal = _legal;
     switch (_stage) {
       case _Stage.over:
-        final MafiaTeam? w = _e.winner;
+        final MafiaTeam? w = _winner;
         return GlassPanel(
           child: Text(
             w == null ? '' : _t('${teamLabel(w, true)} پیروز شد!', '${teamLabel(w, false)} wins!'),
@@ -398,42 +269,30 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
             Text(_t('نقشت را به خاطر بسپار و به کسی نشانش نده.', 'Remember your role and keep it secret.')),
             const SizedBox(height: 10),
             FilledButton.icon(
-              onPressed: _readySeats.contains(_me) ? null : () => _send('ready'),
+              onPressed: _acted || _sending || !_alive ? null : () => _send('ready'),
               icon: const Icon(Icons.check_rounded),
-              label: Text(_readySeats.contains(_me) ? _t('آماده‌ای ✓', 'Ready ✓') : _t('آماده‌ام', "I'm ready")),
+              label: Text(_acted ? _t('آماده‌ای ✓', 'Ready ✓') : _t('آماده‌ام', "I'm ready")),
             ),
             waitLine,
-            skip,
           ]),
         );
       case _Stage.night:
-        final bool actor = _nightActors.contains(_me);
-        if (!actor || _night.containsKey(_me)) {
+        if (legal == null) {
+          final bool lead = vInt(_v?['lead']) == _me;
           return GlassPanel(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: <Widget>[
-              Text(
-                !_mine.alive
-                    ? _t('تو از بازی خارج شده‌ای؛ تماشا کن.', 'You are out — watch the game.')
-                    : actor
-                        ? _t('انتخابت ثبت شد. منتظر بقیه…', 'Your choice is locked in. Waiting…')
-                        : (_mine.isMafia
-                            ? _t('رهبر مافیا قربانی را انتخاب می‌کند؛ در چت مافیا پیشنهاد بده.',
-                                'Your leader picks the target — suggest one in the Mafia chat.')
-                            : _t('شهر خواب است… چشم‌هایت را ببند.', 'The town sleeps… close your eyes.')),
-              ),
-              waitLine,
-              skip,
-            ]),
+            child: Text(
+              !_alive
+                  ? _t('تو از بازی خارج شده‌ای؛ تماشا کن.', 'You are out — watch the game.')
+                  : _acted
+                      ? _t('انتخابت ثبت شد. منتظر بقیه…', 'Your choice is locked in. Waiting…')
+                      : (_myRole.isMafia && !lead
+                          ? _t('رهبر مافیا قربانی را انتخاب می‌کند؛ در چت مافیا پیشنهاد بده.',
+                              'Your leader picks the target — suggest one in the Mafia chat.')
+                          : _t('شهر خواب است… چشم‌هایت را ببند.', 'The town sleeps… close your eyes.')),
+            ),
           );
         }
-        final MafiaRole r = _mine.role;
-        final List<int> legal = r.isMafia
-            ? _e.legalMafiaTargets()
-            : r == MafiaRole.doctor
-                ? _e.legalDoctorTargets()
-                : r == MafiaRole.detective
-                    ? _e.legalDetectiveTargets()
-                    : _e.legalSniperTargets();
+        final MafiaRole r = _myRole;
         final String prompt = r.isMafia
             ? _t('امشب چه کسی را حذف می‌کنید؟', 'Who do you eliminate tonight?')
             : r == MafiaRole.doctor
@@ -442,34 +301,27 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
                     ? _t('هویت چه کسی را استعلام می‌کنی؟', 'Whom do you investigate?')
                     : _t('شلیک می‌کنی؟ (یک گلوله)', 'Fire your single bullet?');
         return _picker(prompt, legal, (int? t) => _send('night', t: t),
-            allowNone: r == MafiaRole.sniper, noneLabel: _t('شلیک نمی‌کنم', 'Hold fire'), extra: <Widget>[waitLine, skip]);
+            allowNone: r == MafiaRole.sniper, noneLabel: _t('شلیک نمی‌کنم', 'Hold fire'));
       case _Stage.nominate:
-        if (!_mine.alive || _votes.containsKey(_me)) {
+        if (legal == null) {
           return GlassPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: <Widget>[
-            Text(_mine.alive ? _t('رأیت ثبت شد.', 'Vote recorded.') : _t('تو از بازی خارج شده‌ای.', 'You are out.')),
+            Text(_alive ? _t('رأیت ثبت شد.', 'Vote recorded.') : _t('تو از بازی خارج شده‌ای.', 'You are out.')),
             waitLine,
-            skip,
           ]));
         }
-        return _picker(_t('گفتگو کنید، بعد به کسی که مشکوک است رأی بده.', 'Discuss, then vote for a suspect.'),
-            _e.legalVoteTargets(_me), (int? t) => _send('nom', t: t),
-            allowNone: true, noneLabel: _t('رأی نمی‌دهم', 'Skip'), extra: <Widget>[waitLine, skip]);
+        return _picker(_t('گفتگو کنید، بعد به کسی که مشکوک است رأی بده.', 'Discuss, then vote for a suspect.'), legal,
+            (int? t) => _send('nom', t: t),
+            allowNone: true, noneLabel: _t('رأی نمی‌دهم', 'Skip'), extra: <Widget>[waitLine]);
       case _Stage.finalVote:
-        if (!_mine.alive || _votes.containsKey(_me)) {
+        if (legal == null) {
           return GlassPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: <Widget>[
-            Text(_t('به دفاع: ${_defendants.map((int d) => _e.player(d).name).join('، ')}',
-                'On trial: ${_defendants.map((int d) => _e.player(d).name).join(', ')}')),
+            Text(_t('به دفاع: ${_defs.map(_name).join('، ')}', 'On trial: ${_defs.map(_name).join(', ')}')),
             waitLine,
-            skip,
           ]));
         }
-        return _picker(
-            _t('دفاع شنیده شد. چه کسی حذف شود؟', 'Defences heard. Who should leave?'),
-            _defendants.where((int d) => d != _me).toList(),
+        return _picker(_t('دفاع شنیده شد. چه کسی حذف شود؟', 'Defences heard. Who should leave?'), legal,
             (int? t) => _send('final', t: t),
-            allowNone: true,
-            noneLabel: _t('هیچ‌کس (بخشش)', 'Nobody (spare)'),
-            extra: <Widget>[waitLine, skip]);
+            allowNone: true, noneLabel: _t('هیچ‌کس (بخشش)', 'Nobody (spare)'), extra: <Widget>[waitLine]);
     }
   }
 
@@ -483,7 +335,7 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
         Wrap(spacing: 8, runSpacing: 8, children: <Widget>[
           for (final int id in legal)
             ChoiceChip(
-              label: Text(_e.player(id).name),
+              label: Text(_name(id)),
               selected: _pick == id,
               onSelected: (_) => setState(() => _pick = id),
             ),
@@ -491,11 +343,11 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
         const SizedBox(height: 10),
         Row(children: <Widget>[
           if (allowNone)
-            Expanded(child: OutlinedButton(onPressed: () => onConfirm(null), child: Text(noneLabel))),
+            Expanded(child: OutlinedButton(onPressed: _sending ? null : () => onConfirm(null), child: Text(noneLabel))),
           if (allowNone) const SizedBox(width: 8),
           Expanded(
             child: FilledButton(
-              onPressed: _pick == null || !legal.contains(_pick) ? null : () => onConfirm(_pick),
+              onPressed: _sending || _pick == null || !legal.contains(_pick) ? null : () => onConfirm(_pick),
               child: Text(_t('تأیید', 'Confirm')),
             ),
           ),
@@ -508,16 +360,18 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
   Widget _playersGrid() {
     return GlassPanel(
       child: Wrap(spacing: 8, runSpacing: 8, children: <Widget>[
-        for (final MafiaPlayer p in _e.players)
+        for (final Map<String, dynamic> p in _players)
           Builder(builder: (BuildContext context) {
-            final MafiaRole? role = _e.visibleRole(_me, p.id);
-            final bool online = _net.connectedSeats.contains(p.id);
+            final int s = vInt(p['s']) ?? 0;
+            final bool alive = p['alive'] == true;
+            final MafiaRole? role = _role(p['role']);
+            final bool online = _net.connectedSeats.contains(s);
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
-                color: p.alive ? NxColors.glass : Colors.black26,
-                border: Border.all(color: p.id == _me ? NxColors.gold : NxColors.goldLine),
+                color: alive ? NxColors.glass : Colors.black26,
+                border: Border.all(color: s == _me ? NxColors.gold : NxColors.goldLine),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
                 Container(
@@ -526,12 +380,12 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
                   decoration: BoxDecoration(shape: BoxShape.circle, color: online ? NxColors.success : NxColors.textDim),
                 ),
                 const SizedBox(width: 6),
-                Text(p.name,
+                Text('${p['name'] ?? _name(s)}',
                     style: TextStyle(
-                        decoration: p.alive ? null : TextDecoration.lineThrough,
-                        color: p.alive ? NxColors.ink : NxColors.textDim,
+                        decoration: alive ? null : TextDecoration.lineThrough,
+                        color: alive ? NxColors.ink : NxColors.textDim,
                         fontWeight: FontWeight.w700)),
-                if (role != null && p.id != _me) ...<Widget>[
+                if (role != null && s != _me) ...<Widget>[
                   const SizedBox(width: 4),
                   Text('· ${_t(role.labelFa, role.labelEn)}',
                       style: TextStyle(color: role.isMafia ? NxColors.danger : NxColors.turquoise, fontSize: 11)),
@@ -544,41 +398,40 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
   }
 
   Widget _logPanel() {
-    final List<GameLogEntry> log = _e.logFor(_me);
-    final List<GameLogEntry> last = log.length > 12 ? log.sublist(log.length - 12) : log;
+    final List<Map<String, dynamic>> log = vMaps(_v?['log']);
+    final List<Map<String, dynamic>> last = log.length > 12 ? log.sublist(log.length - 12) : log;
     return GlassPanel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
         Text(_t('رویدادها', 'Events'), style: const TextStyle(fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
-        for (final GameLogEntry e in last.reversed)
+        for (final Map<String, dynamic> e in last.reversed)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: Text(_t(e.fa, e.en),
+            child: Text(_t('${e['fa'] ?? ''}', '${e['en'] ?? ''}'),
                 style: TextStyle(
                     fontSize: 12,
-                    color: e.kind == LogKind.death
-                        ? NxColors.danger
-                        : (e.visibleTo != null ? NxColors.gold : NxColors.ink))),
+                    color: e['k'] == 'death' ? NxColors.danger : (e['to'] is List ? NxColors.gold : NxColors.ink))),
           ),
       ]),
     );
   }
 
   Widget _chatPanel() {
-    if (_chat.isEmpty) return const SizedBox.shrink();
+    final List<Map<String, dynamic>> chat = vMaps(_v?['chat']);
+    if (chat.isEmpty) return const SizedBox.shrink();
     return GlassPanel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
         Text(_t('گفتگو', 'Discussion'), style: const TextStyle(fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
-        for (final _Chat c in _chat.length > 30 ? _chat.sublist(_chat.length - 30) : _chat)
+        for (final Map<String, dynamic> c in chat.length > 30 ? chat.sublist(chat.length - 30) : chat)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: Text.rich(TextSpan(children: <InlineSpan>[
               TextSpan(
-                text: '${_e.player(c.seat).name}${c.mafiaOnly ? ' 🔒' : ''}: ',
-                style: TextStyle(fontWeight: FontWeight.w800, color: c.mafiaOnly ? NxColors.danger : NxColors.turquoise),
+                text: '${_name(vInt(c['s']) ?? 0)}${c['m'] == true ? ' 🔒' : ''}: ',
+                style: TextStyle(fontWeight: FontWeight.w800, color: c['m'] == true ? NxColors.danger : NxColors.turquoise),
               ),
-              TextSpan(text: c.text),
+              TextSpan(text: '${c['t'] ?? ''}'),
             ]), style: const TextStyle(fontSize: 13)),
           ),
       ]),
@@ -586,7 +439,7 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
   }
 
   Widget _chatInput() {
-    final bool mafiaOnly = _stage == _Stage.night && _mine.isMafia;
+    final bool mafiaOnly = _stage == _Stage.night && _myRole.isMafia;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       child: Row(children: <Widget>[
@@ -605,11 +458,4 @@ class _MafiaOnlineViewState extends State<MafiaOnlineView> {
       ]),
     );
   }
-}
-
-class _Chat {
-  _Chat(this.seat, this.text, this.mafiaOnly);
-  final int seat;
-  final String text;
-  final bool mafiaOnly;
 }

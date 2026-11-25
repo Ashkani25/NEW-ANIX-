@@ -85,7 +85,8 @@ abstract class NetLink {
   /// Tell the link whose turn it is (lets the authority time out absent players).
   set turnSeat(int? seat);
 
-  /// Private per-player data (e.g. Mafia roles): only the addressee can read it.
+  /// Private per-player data: only the addressee can read it. Secrets are written by the server only
+  /// (server-authoritative games, see [ServerGameLink]); [putSecret] is kept for old fakes and does nothing online.
   Future<void> putSecret(int seat, String slot, Map<String, dynamic> data);
   Future<Map<String, dynamic>?> readSecret(String slot);
 
@@ -94,6 +95,16 @@ abstract class NetLink {
 
   /// Number of hash mismatches seen (0 means every phone agreed).
   int get desyncs;
+}
+
+/// Server-authoritative hidden-information games (mafia, spy_mafia, uno): the server deals, validates every input
+/// (nx_hg_act), resolves phases / turns / timeouts and decides the winner. Each phone only reads its own view.
+abstract class ServerGameLink {
+  /// Sends one input to the server engine. Answers `{ok: true, ver}` or `{ok: false, reason}`.
+  Future<Map<String, dynamic>> act(Map<String, dynamic> action);
+
+  /// This player's current view (null until the server has published one).
+  Future<Map<String, dynamic>?> readView();
 }
 
 class NetLiveMessage {

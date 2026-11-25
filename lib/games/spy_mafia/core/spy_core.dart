@@ -60,13 +60,72 @@ class SpyGame {
     clues = List<List<int>>.generate(players, (_) => <int>[]);
   }
 
+  /// Online (server-authoritative) mirror: the server deals and decides; [applyServerView] copies this player's view
+  /// in (the location is -1 for a spy, other spies are unknown until the end, options come from the server).
+  SpyGame.mirror({required this.players, this.rounds = 2}) : _seed = 0 {
+    location = -1;
+    spies = <int>{};
+    starter = 0;
+    clues = List<List<int>>.generate(players, (_) => <int>[]);
+  }
+
   final int players;
   final int rounds;
   final int _seed;
-  late final int location;
-  late final Set<int> spies;
-  late final int starter;
+  late int location;
+  late Set<int> spies;
+  late int starter;
   late List<List<int>> clues;
+
+  /// Online: the number of spies in the match (this player does not know who the others are).
+  int? spyCountOverride;
+
+  /// Online: the clue options the server dealt to this player for the current turn.
+  List<int>? serverOptions;
+
+  /// Online: the locations the server offers the caught spy.
+  List<int>? serverGuessOptions;
+
+  int get spyCount => spyCountOverride ?? spies.length;
+
+  /// Copies a server view (nx_match_secrets 'view' of a spy_mafia match) into this mirror.
+  void applyServerView(Map<String, dynamic> v) {
+    int? i(dynamic x) => x is num ? x.toInt() : null;
+    List<int> ints(dynamic x) => x is List ? <int>[for (final dynamic e in x) if (e is num) e.toInt()] : <int>[];
+    phase = switch ('${v['phase']}') {
+      'vote' => SpyPhase.vote,
+      'guess' => SpyPhase.guess,
+      'over' => SpyPhase.over,
+      _ => SpyPhase.clues,
+    };
+    location = i(v['loc']) ?? -1;
+    spies = ints(v['spies']).toSet();
+    if (v['spy'] == true && mySeatHint != null) spies.add(mySeatHint!);
+    spyCountOverride = i(v['spy_count']);
+    starter = i(v['starter']) ?? 0;
+    turn = i(v['turn']) ?? 0;
+    round = i(v['round']) ?? 0;
+    final dynamic c = v['clues'];
+    clues = List<List<int>>.generate(players, (int s) => c is List && s < c.length ? ints(c[s]) : <int>[]);
+    votes
+      ..clear()
+      ..addAll(<int, int>{
+        if (v['votes'] is Map)
+          for (final MapEntry<dynamic, dynamic> e in (v['votes'] as Map).entries)
+            if (int.tryParse('${e.key}') != null && e.value is num) int.parse('${e.key}'): (e.value as num).toInt(),
+      });
+    out
+      ..clear()
+      ..addAll(ints(v['out']));
+    accused = i(v['accused']);
+    guessedLocation = i(v['guessed']);
+    spiesWin = v['spies_win'] == true;
+    serverOptions = v['opts'] is List ? ints(v['opts']) : <int>[];
+    serverGuessOptions = v['guess_opts'] is List ? ints(v['guess_opts']) : <int>[];
+  }
+
+  /// Online: this phone's seat (so [isSpy] works for the own seat before the end).
+  int? mySeatHint;
   SpyPhase phase = SpyPhase.clues;
   int turn = 0;
   int round = 0;
@@ -81,6 +140,7 @@ class SpyGame {
 
   /// The three clue options [seat] may choose from this round (deterministic per seat/round).
   List<int> options(int seat, [int? rnd]) {
+    if (serverOptions != null) return serverOptions!;
     final math.Random r = math.Random(_seed * 31 + seat * 977 + (rnd ?? round) * 7919);
     if (!isSpy(seat)) {
       final List<int> w = List<int>.generate(6, (int i) => i)..shuffle(r);
@@ -161,6 +221,7 @@ class SpyGame {
 
   /// Six locations shown to the caught spy (always contains the real one), stable for the match.
   List<int> guessOptions() {
+    if (serverGuessOptions != null) return serverGuessOptions!;
     final math.Random r = math.Random(_seed * 13 + 5);
     final List<int> all = List<int>.generate(kSpyLocations.length, (int i) => i)..remove(location);
     all.shuffle(r);
