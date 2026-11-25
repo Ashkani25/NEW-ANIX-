@@ -43,3 +43,24 @@ Settings → Account & data → **Delete account permanently** (`lib/worlds/sett
    bucket store until a service-side cleanup runs).
 4. Client flow: confirm dialog (type DELETE / «حذف» + password if any) → dry run → storage cleanup → delete → local wipe → local sign-out → `/auth`.
    Guests (local-only) still get "Erase all data on this phone".
+
+## 5. Game integrity: server match sweep, move rate limit, resume (games project)
+Migration `supabase/games/migrations/20261126100000_gi_match_sweep_rate.sql` (applied live 2026-11-25; rollback
+`supabase/maintenance/rollback_gi_01_games.sql`; probe `supabase/tests/security/games_gi_01_probe.sql`).
+- **`_nx_match_sweep()`**, pg_cron job `nx_match_sweep` every 20 s, next to `_nx_hg_sweep` (15 s, mafia/spy/uno turn clocks).
+  The server never invents a game move; it applies the authority phone's own rules later, as a safety net:
+  - a seat with no sign of life (match ping, move row, room heartbeat) for 120 s (tournaments: `grace_sec` + 30 s, ≥ 60 s),
+    or 60 s while its server turn clock (`nx_match_turn_state`) has run out, and no result report → server `forfeit` row
+    (`by_user` = all-zero uuid, `move = {seat, idle: true, srv: true}`); one seat left → `nx_finish_match_as` (survivor wins,
+    rewards/Elo) unless the survivor already reported, then the reports decide;
+  - everybody gone → settled from the reports filed (same consensus as `nx_finish_match`), else `abandoned` (no rewards);
+  - nothing happened for 20 min (realtime arcade games 45 min) or the match is older than 3 h → reports, else `abandoned`;
+  - tournament games: absent seats are forfeited the same way, but an all-gone / stalled game is left to `nx_t_tick`
+    (organizer dispute) and its row is closed only once the tournament accepted that game.
+  - every action is logged in `nx_match_sweep_log` (RLS, no client access).
+- **Rate limit** in `nx_push_move` / `nx_g_push`: per player per match at most 12 rows / 3 s and 90 rows / 60 s
+  (`{ok:false, reason:'rate'}`; forfeits always pass). `nx_hg_act` keeps its 150 ms per-seat limit, quiz answers are one per round.
+- **Resume after the app was killed** (`lib/core/online/match_resume.dart`): the match page stores the live match
+  (`online.active_match.v1`: match, game, account, tournament match) and clears it when the match ends or the player
+  leaves; on start-up / sign-in `MatchResumeWatcher` asks `nx_my_active_match` and offers "Return to game", which opens
+  route `/match/:id?game=…&t=…` (the page rebuilds the game from the move log).
