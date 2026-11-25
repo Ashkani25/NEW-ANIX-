@@ -9,6 +9,7 @@ import '../../../core/audio/sfx_service.dart';
 import '../../../core/backend/backend_gateway.dart';
 import '../../../core/online/cloud_profile_sync.dart';
 import '../../../core/online/match_link.dart';
+import '../../../core/online/match_resume.dart';
 import '../../../core/online/online_service.dart';
 import '../../../core/online/room_voice.dart';
 import '../../../core/profile/profile_service.dart';
@@ -52,11 +53,15 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
   bool _recorded = false;
   bool _graceStarted = false;
 
+  /// The game id from the caller, or (resume route without one) from the match row.
+  String get _gameId => widget.gameId.isNotEmpty ? widget.gameId : (_link?.game ?? '');
+
   @override
   void initState() {
     super.initState();
     MusicService.instance.enterGame();
     WidgetsBinding.instance.addObserver(this);
+    OpenMatchTracker.openMatchId.value = widget.matchId;
     unawaited(_open());
   }
 
@@ -82,13 +87,18 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
         }
         if (link.mySeat < 0) {
           link.dispose();
+          unawaited(ActiveMatchStore.maybeInstance?.clear(matchId: widget.matchId));
           setState(() => _error = 'not_player');
           return;
         }
         link.addListener(_onLinkChanged);
         link.resyncRequests.addListener(_onResync);
         setState(() => _link = link);
-        if (link.isOver) _onLinkChanged();
+        if (link.isOver) {
+          _onLinkChanged();
+        } else {
+          _rememberMatch(uid, link);
+        }
         return;
       } catch (e) {
         last = e;
@@ -98,6 +108,21 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     }
     if (mounted) setState(() => _error = '$last');
   }
+
+  /// Keeps this live match on the device so the player can come back into it after the app was killed
+  /// (MatchResumeWatcher asks the server on the next start whether it is still on).
+  void _rememberMatch(String uid, SupabaseMatchLink link) {
+    final ActiveMatchStore? store = ActiveMatchStore.maybeInstance;
+    if (store == null) return;
+    unawaited(store.save(ActiveMatchRecord(
+      matchId: widget.matchId,
+      gameId: _gameId.isNotEmpty ? _gameId : link.game,
+      uid: uid,
+      tournamentMatchId: widget.tournamentMatchId,
+    )));
+  }
+
+  void _forgetMatch() => unawaited(ActiveMatchStore.maybeInstance?.clear(matchId: widget.matchId));
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -116,13 +141,17 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     final SupabaseMatchLink? l = _link;
     if (l == null || !mounted) return;
     final MatchEnd? end = l.end;
+    if (end != null) _forgetMatch();
     if (end != null && !_finished && end.isAbandoned) {
-      // The match was called off before it began (a player backed out of matchmaking at the same instant):
-      // no result, no rewards — straight back to the lobby, which looks for a new match.
+      // The match was called off before it began (a player backed out of matchmaking at the same instant), or the
+      // server closed it after nothing happened for a long time (_nx_match_sweep): no result, no rewards — straight
+      // back to the lobby, which looks for a new match.
       _finished = true;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-          content: Text(context.tx('حریف قبل از شروع خارج شد؛ بازی لغو شد',
-              'A player left before the start — match cancelled'))));
+          content: Text(l.hasLog
+              ? context.tx('بازی به‌خاطر عدم فعالیت بسته شد', 'The match was closed after a long time with no play')
+              : context.tx('حریف قبل از شروع خارج شد؛ بازی لغو شد',
+                  'A player left before the start — match cancelled'))));
       Navigator.of(context).pop('abandoned');
       return;
     }
@@ -177,6 +206,7 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
   void _finish(GameResult r, {required bool report}) {
     if (_finished) return;
     _finished = true;
+    if (r.endsMatch) _forgetMatch();
     if (r.outcome != GameOutcome.draw) NxSfx.instance.play(r.outcome == GameOutcome.win ? 'win' : 'lose');
     final SupabaseMatchLink? l = _link;
     if (ref.read(settingsProvider).haptics) HapticFeedback.heavyImpact();
@@ -194,11 +224,11 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
           outcome: switch (r.outcome) { GameOutcome.win => 'win', GameOutcome.loss => 'loss', GameOutcome.draw => 'draw' },
           myScore: r.score,
           oppScore: r.opponentScore);
-      final GameInfo? g = gameById(widget.gameId);
+      final GameInfo? g = gameById(_gameId);
       ref.read(profileProvider).recordOnlineGame(
-            gameId: widget.gameId,
-            gameNameFa: g?.nameFa ?? widget.gameId,
-            gameNameEn: g?.nameEn ?? widget.gameId,
+            gameId: _gameId,
+            gameNameFa: g?.nameFa ?? _gameId,
+            gameNameEn: g?.nameEn ?? _gameId,
             outcome: switch (r.outcome) {
               GameOutcome.win => 'win',
               GameOutcome.loss => 'loss',
@@ -275,6 +305,7 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     );
     if (ok == true) {
       _finished = true;
+      _forgetMatch();
       await _link?.forfeit();
       return true;
     }
@@ -289,8 +320,10 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
   void dispose() {
     _immersive.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    if (OpenMatchTracker.openMatchId.value == widget.matchId) OpenMatchTracker.openMatchId.value = null;
     final SupabaseMatchLink? l = _link;
     if (l != null) {
+      if (l.isOver) _forgetMatch();
       l.removeListener(_onLinkChanged);
       l.resyncRequests.removeListener(_onResync);
       l.dispose();
@@ -304,7 +337,7 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     ref.watch(backendProvider);
     final AppSettings s = ref.watch(settingsProvider);
     final SupabaseMatchLink? l = _link;
-    final GameInfo? game = gameById(widget.gameId);
+    final GameInfo? game = gameById(_gameId);
     Widget body;
     if (_error != null) {
       body = Center(
@@ -323,7 +356,7 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
       body = const Center(child: CircularProgressIndicator());
     } else {
       final GameLaunch launch = GameLaunch(
-        gameId: widget.gameId,
+        gameId: _gameId,
         mode: GameMode.online,
         difficulty: BotDifficulty.normal,
         playerName: l.mySeat >= 0 && l.mySeat < l.names.length
@@ -388,7 +421,7 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
               top: MediaQuery.paddingOf(context).top + 58,
               left: 0,
               right: 0,
-              child: OracleTutorialBanner(gameId: widget.gameId),
+              child: OracleTutorialBanner(gameId: _gameId),
             ),
               ]),
             ),

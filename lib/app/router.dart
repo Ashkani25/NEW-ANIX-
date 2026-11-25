@@ -17,6 +17,7 @@ import '../worlds/arcade/arcade_page.dart';
 import '../worlds/arcade/game_setup_page.dart';
 import '../worlds/arcade/online/leaderboard_page.dart';
 import '../worlds/arcade/online/online_lobby_page.dart';
+import '../worlds/arcade/online/online_match_page.dart';
 import '../worlds/auth/auth_page.dart';
 import '../worlds/auth/password_reset_pages.dart';
 import '../worlds/auth/signin_required_page.dart';
@@ -172,6 +173,15 @@ GoRouter buildRouter(WidgetRef ref) {
           joinCode: state.uri.queryParameters['code'],
           roomId: state.uri.queryParameters['room'],
           action: state.uri.queryParameters['action'],
+        ),
+      ),
+      // Back into a live online match after the app was killed (MatchResumeWatcher, match_resume.dart).
+      GoRoute(
+        path: '/match/:id',
+        builder: (context, state) => OnlineMatchPage(
+          matchId: state.pathParameters['id'] ?? '',
+          gameId: state.uri.queryParameters['game'] ?? '',
+          tournamentMatchId: state.uri.queryParameters['t'],
         ),
       ),
       GoRoute(

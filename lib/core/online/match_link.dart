@@ -155,6 +155,9 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
   MatchEnd? get end => _end;
   bool get isOver => _status != 'playing';
 
+  /// True once any row of the move log reached this phone (the match had actually started).
+  bool get hasLog => _server.isNotEmpty;
+
   RealtimeChannel? _ch;
   Timer? _poll;
   Timer? _watch;

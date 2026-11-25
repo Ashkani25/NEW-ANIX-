@@ -12,6 +12,7 @@ import '../core/backend/backend_gateway.dart';
 import '../core/online/call_watcher.dart';
 import '../core/online/cloud_profile_sync.dart';
 import '../core/online/invite_watcher.dart';
+import '../core/online/match_resume.dart';
 import '../core/online/online_service.dart';
 import '../core/push/push_service.dart';
 import '../core/settings/app_settings.dart';
@@ -37,6 +38,8 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
       GlobalKey<ScaffoldMessengerState>();
   late final InviteWatcher _invites = InviteWatcher(ref, _messenger,
       (String game, String code) => _router.push('/online/$game?code=$code'));
+  late final MatchResumeWatcher _resume =
+      MatchResumeWatcher(ref, _messenger, (String route) => _router.push(route));
   late final TournamentWatcher _tournaments =
       TournamentWatcher(ref, _messenger, (String route) => _router.push(route));
   late final AnnouncementWatcher _announcements = AnnouncementWatcher(ref, _messenger);
@@ -61,6 +64,8 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
       _invites.sync();
       ref.read(onlineProvider).addListener(_calls.sync);
       _calls.sync();
+      ref.read(onlineProvider).addListener(_resume.sync);
+      _resume.sync();
       _tournaments.start();
       ref.read(onlineProvider).addListener(_tournaments.sync);
       _tournaments.sync();
@@ -88,6 +93,7 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
     AppGate.instance.stop();
     PushService.instance.stop();
     _invites.dispose();
+    _resume.dispose();
     _announcements.dispose();
     _calls.dispose();
     _tournaments.dispose();
