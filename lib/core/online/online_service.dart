@@ -410,6 +410,66 @@ class OnlineService extends ChangeNotifier {
     return ok ?? false;
   }
 
+  // ------------------------------------------------------------------ account deletion (P0 #1)
+  /// Permanently deletes the signed-in account on the server (`nx_delete_account`, both projects through the bridge).
+  ///
+  /// [password] is the account password when it has one (username accounts store it with the `nx#` prefix, added
+  /// here). Returns null on success, otherwise an error key: confirm_required, wrong_password, owner_cannot_delete,
+  /// rate_limited, not_signed_in, network or the server message.
+  /// Order: validate (dry run) -> remove own storage files through the Storage API -> delete for real -> local sign-out.
+  Future<String?> deleteAccount({String? password}) async {
+    final SupabaseClient? c = client;
+    if (c == null || c.auth.currentSession == null || isGuest) return 'not_signed_in';
+    final String? pw = (password == null || password.isEmpty) ? null : (isInternalAccount ? 'nx#$password' : password);
+    Future<String?> call(bool dry) async {
+      final dynamic r = await c.rpc('nx_delete_account',
+          params: <String, dynamic>{'p_confirm': 'DELETE', 'p_password': pw, 'p_dry_run': dry});
+      if (r is Map && r['ok'] == true) return null;
+      return r is Map ? (r['error'] as String? ?? 'failed') : 'failed';
+    }
+
+    busy = true;
+    notifyListeners();
+    try {
+      final String? check = await call(true);
+      if (check != null) return check;
+      try {
+        final dynamic files = await c.rpc('nx_my_storage_objects');
+        final Map<String, List<String>> byBucket = <String, List<String>>{};
+        if (files is List) {
+          for (final dynamic f in files) {
+            if (f is Map && f['bucket'] is String && f['path'] is String) {
+              byBucket.putIfAbsent(f['bucket'] as String, () => <String>[]).add(f['path'] as String);
+            }
+          }
+        }
+        for (final MapEntry<String, List<String>> e in byBucket.entries) {
+          try {
+            await c.storage.from(e.key).remove(e.value);
+          } catch (err) {
+            debugPrint('delete account storage ${e.key}: $err');
+          }
+        }
+      } catch (err) {
+        debugPrint('delete account storage list: $err');
+      }
+      final String? done = await call(false);
+      if (done != null) return done;
+      try {
+        await c.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {}
+      _helloFor = null;
+      return null;
+    } catch (e) {
+      final String m = '$e';
+      if (m.contains('rate_limited')) return 'rate_limited';
+      return _friendly(e);
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   /// Sign out. Guest mode is local-only and never creates an anonymous session.
   Future<void> signOut({bool continueAsGuest = false}) async {
     await _run<bool>((SupabaseClient c) async {
