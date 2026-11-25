@@ -34,7 +34,8 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
   final GlobalKey<ScaffoldMessengerState> _messenger =
       GlobalKey<ScaffoldMessengerState>();
   late final InviteWatcher _invites = InviteWatcher(ref, _messenger,
-      (String game, String code) => _router.push('/online/$game?code=$code'));
+      (String game, String code) => _router.push('/online/$game?code=$code'),
+      onWatch: (String route) => _router.push(route));
   late final MatchResumeWatcher _resume =
       MatchResumeWatcher(ref, _messenger, (String route) => _router.push(route));
   late final TournamentWatcher _tournaments =

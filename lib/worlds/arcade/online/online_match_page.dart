@@ -3,15 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 
 import '../../../core/audio/music_service.dart';
 import '../../../core/audio/sfx_service.dart';
 import '../../../core/backend/backend_gateway.dart';
 import '../../../core/online/cloud_profile_sync.dart';
 import '../../../core/online/match_link.dart';
+import '../../../core/economy/victory_fx.dart';
+import '../../../core/online/match_rematch.dart';
 import '../../../core/online/match_resume.dart';
 import '../../../core/online/online_service.dart';
 import '../../../core/online/room_voice.dart';
+import '../../../core/online/social_api.dart';
+import '../../../core/safety/safety_actions.dart';
+import '../../../core/ui2/luxe.dart';
 import '../../../core/profile/profile_service.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../core/theme/nx_theme.dart';
@@ -27,9 +33,14 @@ class OnlineMatchPage extends ConsumerStatefulWidget {
       {super.key,
       required this.matchId,
       required this.gameId,
-      this.tournamentMatchId});
+      this.tournamentMatchId,
+      this.spectate = false});
   final String matchId;
   final String gameId;
+
+  /// RS-01: watch read-only (room member / invited by a player). The game is drawn from seat 0's side, touches are
+  /// ignored, nothing is sent, reported, recorded or rewarded, and leaving is free.
+  final bool spectate;
 
   /// Set when this game belongs to a tournament match: the result is also reported to the tournament
   /// (nx_t_report — both players' reports must agree, otherwise it becomes a dispute).
@@ -51,6 +62,11 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
   String? _resultNoteEn;
   bool _recorded = false;
   bool _graceStarted = false;
+
+  /// Rematch on the result screen for every game but finger soccer (which offers it on its own score table).
+  MatchRematchController? _rematch;
+
+  bool get _watching => _link?.isSpectator ?? false;
 
   /// The game id from the caller, or (resume route without one) from the match row.
   String get _gameId => widget.gameId.isNotEmpty ? widget.gameId : (_link?.game ?? '');
@@ -79,12 +95,12 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     for (int attempt = 0; attempt < 4; attempt++) {
       try {
         final SupabaseMatchLink link =
-            await SupabaseMatchLink.open(client, widget.matchId, uid: uid);
+            await SupabaseMatchLink.open(client, widget.matchId, uid: uid, spectate: widget.spectate);
         if (!mounted) {
           link.dispose();
           return;
         }
-        if (link.mySeat < 0) {
+        if (link.mySeat < 0 || (link.isSpectator && !isSpectatableGame(link.game))) {
           link.dispose();
           unawaited(ActiveMatchStore.maybeInstance?.clear(matchId: widget.matchId));
           setState(() => _error = 'not_player');
@@ -95,12 +111,17 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
         setState(() => _link = link);
         if (link.isOver) {
           _onLinkChanged();
-        } else {
+        } else if (!link.isSpectator) {
           _rememberMatch(uid, link);
         }
         return;
       } catch (e) {
         last = e;
+        if (widget.spectate && e is PostgrestException && e.code == 'PGRST116') {
+          // RLS hid the row: not allowed to watch (not a member / not invited / blocked / ended)
+          setState(() => _error = 'not_player');
+          return;
+        }
         await Future<void>.delayed(Duration(milliseconds: 700 * (attempt + 1)));
         if (!mounted) return;
       }
@@ -140,6 +161,11 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     final SupabaseMatchLink? l = _link;
     if (l == null || !mounted) return;
     final MatchEnd? end = l.end;
+    if (l.isSpectator) {
+      if (end != null && !_finished) _finishWatching(l, end);
+      setState(() {});
+      return;
+    }
     if (end != null) _forgetMatch();
     if (end != null && !_finished && end.isAbandoned) {
       // The match was called off before it began (a player backed out of matchmaking at the same instant), or the
@@ -200,7 +226,53 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     ];
   }
 
-  void _onGameFinish(GameResult r) => _finish(r, report: true);
+  void _onGameFinish(GameResult r) {
+    final SupabaseMatchLink? l = _link;
+    if (l != null && l.isSpectator) {
+      // the watcher's copy of the game reached its end: wait for the server's result (never report)
+      if (l.end != null) _finishWatching(l, l.end!);
+      return;
+    }
+    _finish(r, report: true);
+  }
+
+  /// Spectator: the match is over on the server. Shows who won; nothing is recorded or rewarded.
+  void _finishWatching(SupabaseMatchLink l, MatchEnd end) {
+    if (_finished) return;
+    _finished = true;
+    final String who = end.winners.where((int s) => s >= 0 && s < l.names.length).map((int s) => l.names[s]).join('، ');
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      setState(() => _result = GameResult(
+            outcome: GameOutcome.draw,
+            summaryFa: end.winners.isEmpty ? 'بازی مساوی شد' : 'برنده: $who',
+            summaryEn: end.winners.isEmpty ? 'The match ended in a draw' : 'Winner: $who',
+          ));
+    }));
+  }
+
+  /// Generic rematch (match_rematch.dart) for the result screen: room matches, not tournaments, not finger soccer.
+  void _startRematchOffer() {
+    if (_rematch != null || _watching || _gameId == 'finger_soccer' || widget.tournamentMatchId != null) return;
+    final MatchRematchController? c =
+        MatchRematchController.forLink(_link, tournamentMatchId: widget.tournamentMatchId, onGo: _goRematch);
+    if (c == null) return;
+    c.tableDone(); // no score table here: the result overlay is already up
+    _rematch = c;
+  }
+
+  /// Everyone accepted and the new match exists: leave this page; the room page opens the new match as usual.
+  void _goRematch(String matchId) {
+    if (!mounted) return;
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    final NavigatorState? nav = Navigator.maybeOf(context);
+    if (route == null || nav == null) return;
+    if (route.isCurrent) {
+      nav.pop('rematch');
+    } else {
+      nav.removeRoute(route);
+    }
+  }
 
   void _finish(GameResult r, {required bool report}) {
     if (_finished) return;
@@ -241,7 +313,9 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     // capped so the result overlay always comes up
     final Future<void>? extra = report ? r.holdUntil?.timeout(const Duration(seconds: 90), onTimeout: () {}).catchError((Object _) {}) : null;
     unawaited((extra == null ? hold : Future.wait(<Future<void>>[hold, extra])).then((_) {
-      if (mounted) setState(() => _result = r);
+      if (!mounted) return;
+      _startRematchOffer();
+      setState(() => _result = r);
     }));
   }
 
@@ -282,7 +356,7 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
   }
 
   Future<bool> _confirmLeave() async {
-    if (_finished || _link == null) return true;
+    if (_finished || _link == null || _watching) return true;
     final bool? ok = await showDialog<bool>(
       context: context,
       builder: (BuildContext ctx) => AnixDialog(
@@ -317,12 +391,13 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
 
   @override
   void dispose() {
+    _rematch?.dispose();
     _immersive.dispose();
     WidgetsBinding.instance.removeObserver(this);
     if (OpenMatchTracker.openMatchId.value == widget.matchId) OpenMatchTracker.openMatchId.value = null;
     final SupabaseMatchLink? l = _link;
     if (l != null) {
-      if (l.isOver) _forgetMatch();
+      if (l.isOver && !l.isSpectator) _forgetMatch();
       l.removeListener(_onLinkChanged);
       l.resyncRequests.removeListener(_onResync);
       l.dispose();
@@ -341,7 +416,9 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
     if (_error != null) {
       body = Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
-        Text(context.tx('ورود به بازی ممکن نشد', 'Could not open the match')),
+        Text(widget.spectate
+            ? context.tx('تماشای این بازی ممکن نیست', 'This match can not be watched')
+            : context.tx('ورود به بازی ممکن نشد', 'Could not open the match')),
         if (_error != 'not_player' && _error != 'offline') ...<Widget>[
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -376,7 +453,8 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
         key: ValueKey<int>(_generation),
         child: game.builder(launch),
       );
-      body = gameView;
+      // a spectator's touches never reach the game (it also can not send anything: SupabaseMatchLink.isSpectator)
+      body = l.isSpectator ? IgnorePointer(child: gameView) : gameView;
     }
     return PopScope(
       canPop: false,
@@ -415,7 +493,29 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
                 top: MediaQuery.paddingOf(context).top + 10,
                 end: 10,
                 child: _presenceBar(l)),
-          if (_result == null)
+          // RS-01: a player may invite a friend to watch (read-only) while the match runs
+          if (l != null && !l.isSpectator && !l.isOver && _result == null && isSpectatableGame(l.game))
+            PositionedDirectional(
+              top: MediaQuery.paddingOf(context).top + 6,
+              start: 56,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.35),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: context.tx('دعوت دوست به تماشا', 'Invite a friend to watch'),
+                  icon: const Icon(Icons.visibility_rounded, color: Colors.white, size: 20),
+                  onPressed: () => unawaited(_inviteWatcher(l)),
+                ),
+              ),
+            ),
+          if (l != null && l.isSpectator && _result == null)
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 12,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(child: Center(child: _watchBadge(context))),
+            ),
+          if (_result == null && !_watching)
             Positioned(
               top: MediaQuery.paddingOf(context).top + 58,
               left: 0,
@@ -427,7 +527,8 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
           ),
           // In-match voice: mic mute/unmute + speaker on/off (same LiveKit room as the lobby). An immersive game keeps
           // a bottom strip free of play for it, so it sits centred there.
-          if (_result == null)
+          // spectators stay out of the players' voice room (no coaching from the stands)
+          if (_result == null && !_watching)
             ValueListenableBuilder<bool>(
               valueListenable: _immersive,
               // One stable tree in both modes (only the alignment changes), so the voice bar keeps its connection.
@@ -442,10 +543,114 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
               ),
               child: RoomVoiceBar(id: widget.matchId, match: true, compact: true),
             ),
+          if (_result != null && !_watching && _result!.outcome == GameOutcome.win)
+            Positioned.fill(child: _victoryFx(s)),
           if (_result != null)
-            Positioned.fill(child: _overlay(context, _result!)),
+            Positioned.fill(child: _watching ? _watchOverlay(context, _result!) : _overlay(context, _result!)),
         ]),
       ),
+    );
+  }
+
+  /// Friends list -> nx_invite_watch (server checks: caller plays this match, not blocked, not banned, watchable).
+  Future<void> _inviteWatcher(SupabaseMatchLink l) async {
+    final OnlineService o = ref.read(onlineProvider);
+    final c = o.games;
+    if (c == null) return;
+    List<NxUser> friends = <NxUser>[];
+    try {
+      final a = o.social;
+      if (a != null) friends = await SocialApi(a).friends();
+    } catch (_) {}
+    if (!mounted) return;
+    final Set<String> playing = l.names.toSet();
+    await showAnixSheet<void>(
+      context: context,
+      builder: (BuildContext ctx) => SafeArea(
+        child: friends.isEmpty
+            ? Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(ctx.tx('هنوز دوستی نداری.', 'No friends yet.')),
+              )
+            : ListView(shrinkWrap: true, children: <Widget>[
+                for (final NxUser f in friends)
+                  if (!playing.contains(f.username))
+                    ListTile(
+                      leading: const Icon(Icons.person_rounded),
+                      title: Text(f.username),
+                      trailing: FilledButton(
+                        onPressed: () async {
+                          final bool fa = ctx.isFa;
+                          final String sent = fa ? 'دعوت به تماشا فرستاده شد' : 'Watch invite sent';
+                          final String notSent = fa ? 'دعوت فرستاده نشد' : 'Invite not sent';
+                          String msg;
+                          bool bad = false;
+                          try {
+                            final dynamic r = await c.rpc('nx_invite_watch',
+                                params: <String, dynamic>{'p_match': widget.matchId, 'p_user': f.id});
+                            final bool ok = r is Map && r['ok'] == true;
+                            bad = !ok;
+                            msg = ok ? sent : notSent;
+                          } catch (e) {
+                            bad = true;
+                            msg = safetyErrorText(e, fa) ?? notSent;
+                          }
+                          if (!mounted) return;
+                          luxeToast(context, msg, error: bad);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        },
+                        child: Text(ctx.tx('دعوت', 'Invite')),
+                      ),
+                    ),
+              ]),
+      ),
+    );
+  }
+
+  Widget _victoryFx(AppSettings s) {
+    final VictoryFx? fx = equippedVictoryFx(ref.read(profileProvider));
+    if (fx == null) return const SizedBox.shrink();
+    return VictoryFxBurst(fx: fx, reducedMotion: s.reducedMotion);
+  }
+
+  Widget _watchBadge(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: NxColors.gold.withValues(alpha: .6)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+          const Icon(Icons.visibility_rounded, size: 14, color: NxColors.gold),
+          const SizedBox(width: 5),
+          Text(context.tx('در حال تماشا', 'Watching'),
+              style: const TextStyle(color: NxColors.gold, fontSize: 12, fontWeight: FontWeight.w800)),
+        ]),
+      );
+
+  /// Spectator end screen: the server's result, no rewards, back.
+  Widget _watchOverlay(BuildContext context, GameResult r) {
+    final String summary = context.tx(r.summaryFa, r.summaryEn);
+    return Container(
+      color: Colors.black.withValues(alpha: 0.72),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
+        const Icon(Icons.flag_rounded, color: NxColors.gold, size: 64),
+        const SizedBox(height: 10),
+        Text(context.tx('بازی تمام شد', 'Match over'),
+            style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: NxColors.gold)),
+        if (summary.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(summary, textAlign: TextAlign.center, style: const TextStyle(color: NxColors.ink)),
+        ],
+        const SizedBox(height: 22),
+        FilledButton.icon(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back_rounded),
+          label: Text(context.tx('بازگشت', 'Back')),
+        ),
+      ]),
     );
   }
 
@@ -550,6 +755,19 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: NxColors.gold, fontSize: 12)),
           ),
+        if (_rematch != null) ...<Widget>[
+          const SizedBox(height: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: MatchRematchPanel(c: _rematch!, fa: context.isFa),
+          ),
+        ],
+        if (r.outcome == GameOutcome.win)
+          TextButton.icon(
+            onPressed: () => showVictoryFxShop(context, fa: context.isFa),
+            icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+            label: Text(context.tx('افکت پیروزی', 'Victory effect')),
+          ),
         const SizedBox(height: 22),
         FilledButton.icon(
           onPressed: () => Navigator.of(context).pop(),
@@ -558,10 +776,13 @@ class _OnlineMatchPageState extends ConsumerState<OnlineMatchPage>
               : Icons.meeting_room_rounded),
           label: Text(widget.tournamentMatchId != null
               ? context.tx('بازگشت به تورنمنت', 'Back to the tournament')
-              : context.tx('بازگشت به اتاق (بازی دوباره)',
-                  'Back to the room (rematch)')),
+              : context.tx('بازگشت به اتاق', 'Back to the room')),
         ),
       ]),
     );
   }
 }
+
+/// Games a spectator can follow from the public move log. The server-authoritative hidden-information games (each
+/// player sees only their own view) are not watchable; the server enforces the same list (nx_can_spectate).
+bool isSpectatableGame(String gameId) => !const <String>{'mafia', 'spy_mafia', 'uno', 'quiz'}.contains(gameId);

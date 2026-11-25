@@ -113,6 +113,13 @@ class GemShop extends ChangeNotifier {
 
   bool teamForSale(String teamId) => !_inactive.contains(teamItemId(teamId));
 
+  /// Server catalog gem price of any gem item (null until loaded / not in the catalog). Victory effects
+  /// (victory_fx.dart, `nx_fx:*`) use it for every game.
+  int? price(String itemId) => _prices[itemId];
+
+  /// False when the server catalog has [itemId] switched off.
+  bool forSale(String itemId) => !_inactive.contains(itemId);
+
   bool ownsTeam(String teamId) {
     if (teamId == kCustomTeamId) return myCustomTeam != null;
     if (bmIsCustomTeamId(teamId)) return isMyCustomTeam(teamId) || (_p?.owns(teamItemId(teamId)) ?? false);

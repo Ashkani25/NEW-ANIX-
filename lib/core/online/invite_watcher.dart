@@ -11,13 +11,16 @@ import '../ui2/luxe.dart';
 
 /// Shows real-time game invitations from friends anywhere in the app.
 class InviteWatcher {
-  InviteWatcher(this._ref, this._messenger, this._open);
+  InviteWatcher(this._ref, this._messenger, this._open, {this.onWatch});
 
   final WidgetRef _ref;
   final GlobalKey<ScaffoldMessengerState> _messenger;
 
   /// Opens the online lobby for (gameId, code).
   final void Function(String gameId, String code) _open;
+
+  /// RS-01: opens an in-app route for a watch invite ('/match/<id>?game=<g>&watch=1'). Null: watch invites are ignored.
+  final void Function(String route)? onWatch;
 
   RealtimeChannel? _ch;
   String? _uid;
@@ -67,6 +70,10 @@ class InviteWatcher {
     final String game = '${p['game'] ?? ''}';
     final String code = '${p['code'] ?? ''}';
     final String from = '${p['from_name'] ?? 'Pilot'}';
+    if (r['kind'] == 'watch') {
+      _showWatch(id, p, from);
+      return;
+    }
     final GameInfo? g = gameById(game);
     final bool fa = _ref.read(settingsProvider).isFa;
     final String gameName = g == null ? game : (fa ? g.nameFa : g.nameEn);
@@ -82,6 +89,31 @@ class InviteWatcher {
           unawaited(c.from('nx_invites').update(<String, dynamic>{'status': 'accepted'}).eq('id', id).then((_) {}, onError: (Object _) {}));
         }
         _open(game, code);
+      },
+      duration: const Duration(seconds: 12),
+    );
+  }
+
+  /// A player invited this user to watch their live match (nx_invite_watch).
+  void _showWatch(int id, Map<String, dynamic> p, String from) {
+    final void Function(String route)? open = onWatch;
+    final String match = '${p['match_id'] ?? ''}';
+    final String game = '${p['game'] ?? ''}';
+    final ScaffoldMessengerState? m = _messenger.currentState;
+    if (open == null || m == null || match.isEmpty) return;
+    final GameInfo? g = gameById(game);
+    final bool fa = _ref.read(settingsProvider).isFa;
+    final String gameName = g == null ? game : (fa ? g.nameFa : g.nameEn);
+    luxeToastState(
+      m,
+      fa ? '$from تو را به تماشای $gameName دعوت کرد' : '$from invited you to watch $gameName',
+      actionLabel: fa ? 'تماشا' : 'Watch',
+      onAction: () {
+        final SupabaseClient? c = _ref.read(onlineProvider).games;
+        if (c != null && id >= 0) {
+          unawaited(c.from('nx_invites').update(<String, dynamic>{'status': 'accepted'}).eq('id', id).then((_) {}, onError: (Object _) {}));
+        }
+        open(Uri(path: '/match/$match', queryParameters: <String, String>{'game': game, 'watch': '1'}).toString());
       },
       duration: const Duration(seconds: 12),
     );

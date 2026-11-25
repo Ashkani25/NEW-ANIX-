@@ -100,7 +100,8 @@ int absenceLimitSec({required bool onTurn, int? graceSec}) => graceSec ?? (onTur
 /// * Delivery: Realtime postgres_changes + a catch-up poll (never misses a move).
 /// * Presence + ephemeral 'live' messages: Realtime channel `nxm:<matchId>`.
 class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLink {
-  SupabaseMatchLink._(this._c, this.matchId, this._uid, Map<String, dynamic> m, {MatchBackend? backend})
+  SupabaseMatchLink._(this._c, this.matchId, this._uid, Map<String, dynamic> m,
+      {MatchBackend? backend, bool spectate = false})
       : _b = backend ?? _SupabaseBackend(_c!, matchId) {
     _players = (m['players'] as List<dynamic>).map((dynamic e) => '$e').toList();
     names = ((m['names'] as List<dynamic>?) ?? const <dynamic>[]).map((dynamic e) => '$e').toList();
@@ -111,15 +112,21 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
     game = '${m['game']}';
     roomId = m['room_id'] as String?;
     settings = Map<String, dynamic>.from((m['settings'] as Map?) ?? const <String, dynamic>{});
-    mySeat = _players.indexOf(_uid);
+    final int seat = _players.indexOf(_uid);
+    // A spectator (not one of the players) watches from seat 0's side; every write path below is closed for it.
+    isSpectator = spectate && seat < 0;
+    mySeat = isSpectator ? 0 : seat;
     _status = '${m['status']}';
     if (_status != 'playing') _end = _endFrom(m);
   }
 
   /// [c] = games-project client; [uid] = the signed-in user (from the auth project's session).
-  static Future<SupabaseMatchLink> open(SupabaseClient c, String matchId, {required String uid}) async {
+  ///
+  /// [spectate]: open read-only when [uid] is not a player (RS-01, 20261126210000_rs01_spectator.sql: room members and
+  /// users a player invited to watch may read the match, its log and the Realtime channel, but never write).
+  static Future<SupabaseMatchLink> open(SupabaseClient c, String matchId, {required String uid, bool spectate = false}) async {
     final Map<String, dynamic> m = await c.from('nx_matches').select().eq('id', matchId).single();
-    final SupabaseMatchLink link = SupabaseMatchLink._(c, matchId, uid, m);
+    final SupabaseMatchLink link = SupabaseMatchLink._(c, matchId, uid, m, spectate: spectate);
     link._connect();
     return link;
   }
@@ -127,8 +134,8 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
   /// Tests: a link on an in-memory [backend] (no Realtime; the catch-up poll delivers moves).
   @visibleForTesting
   factory SupabaseMatchLink.test(MatchBackend backend, String matchId, String uid, Map<String, dynamic> m,
-      {Duration poll = const Duration(milliseconds: 50)}) {
-    final SupabaseMatchLink link = SupabaseMatchLink._(null, matchId, uid, m, backend: backend);
+      {Duration poll = const Duration(milliseconds: 50), bool spectate = false}) {
+    final SupabaseMatchLink link = SupabaseMatchLink._(null, matchId, uid, m, backend: backend, spectate: spectate);
     link._poll = Timer.periodic(poll, (_) => unawaited(link._catchUp()));
     return link;
   }
@@ -149,6 +156,10 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
   late final Map<String, dynamic> settings;
   @override
   late final int mySeat;
+
+  /// Read-only watcher: renders the match from seat 0's side, never sends a move, a live message, presence, a
+  /// heartbeat, a report or a forfeit.
+  late final bool isSpectator;
 
   String _status = 'playing';
   MatchEnd? _end;
@@ -211,6 +222,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
 
   @override
   bool get isAuthority =>
+      !isSpectator &&
       authoritySeat(
         seatCount: seatCount,
         mySeat: mySeat,
@@ -229,8 +241,8 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
   void _connect() {
     // Private channel: Realtime Authorization (realtime.messages policies on the games project) admits only the match's
     // players, so outsiders can neither listen to nor inject broadcasts / presence.
-    final RealtimeChannel ch =
-        _c!.channel('nxm:$matchId', opts: RealtimeChannelConfig(key: '$mySeat', self: false, private: true));
+    final RealtimeChannel ch = _c!.channel('nxm:$matchId',
+        opts: RealtimeChannelConfig(key: isSpectator ? 'w:$_uid' : '$mySeat', self: false, private: true));
     ch
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -292,13 +304,15 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
         .onPresenceLeave((_) => _syncPresence())
         .subscribe((RealtimeSubscribeStatus status, Object? error) {
           if (status == RealtimeSubscribeStatus.subscribed) {
-            unawaited(ch.track(<String, dynamic>{'seat': mySeat, 'uid': _uid}));
+            // a spectator only listens: the channel's INSERT policy (track / send) is players-only anyway
+            if (!isSpectator) unawaited(ch.track(<String, dynamic>{'seat': mySeat, 'uid': _uid}));
             unawaited(_catchUp());
             _sendRttProbe();
           }
         });
     _ch = ch;
     _poll = Timer.periodic(const Duration(milliseconds: 1400), (_) => unawaited(_catchUp()));
+    if (isSpectator) return;
     _watch = Timer.periodic(const Duration(seconds: 5), (_) => _watchAbsent());
     _rttTimer = Timer.periodic(const Duration(seconds: 4), (_) => _sendRttProbe());
     unawaited(_ping());
@@ -307,7 +321,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
 
   void _sendRttProbe() {
     final RealtimeChannel? ch = _ch;
-    if (ch == null || _disposed || isOver) return;
+    if (ch == null || _disposed || isOver || isSpectator) return;
     unawaited(ch.sendBroadcastMessage(
       event: 'rtt_q',
       payload: <String, dynamic>{'from': mySeat, 't': DateTime.now().millisecondsSinceEpoch},
@@ -369,7 +383,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
         if (s is num) now.add(s.toInt());
       }
     }
-    now.add(mySeat);
+    if (!isSpectator) now.add(mySeat);
     final bool first = !_presenceKnown;
     _presenceKnown = true;
     if (first || !setEquals(now, _connected)) {
@@ -532,9 +546,28 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
     }());
   }
 
+  DateTime? _spectatorResyncAt;
+
+  /// A spectator's game tried to post something by itself (an automatic move of the seat it is drawn from): nothing
+  /// is sent, and the view is rebuilt from the server log a moment later so it never shows a move that did not happen
+  /// (at most once every 8 s).
+  void _spectatorSend() {
+    final DateTime now = DateTime.now();
+    final DateTime? last = _spectatorResyncAt;
+    if (_disposed || isOver || (last != null && now.difference(last).inSeconds < 8)) return;
+    _spectatorResyncAt = now;
+    Future<void>.delayed(const Duration(milliseconds: 1200), () {
+      if (!_disposed && !isOver) _requestResync();
+    });
+  }
+
   @override
   Future<bool> send(Map<String, dynamic> data, {String kind = 'move', String? hash, int? asSeat}) {
     if (isOver) return Future<bool>.value(false);
+    if (isSpectator) {
+      _spectatorSend();
+      return Future<bool>.value(false);
+    }
     final int seat = asSeat ?? mySeat;
     if (data[kNetFloat] == true) return _sendFloating(data, kind, hash, seat);
     final int seq = _delivered + 1;
@@ -645,6 +678,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
 
   @override
   void sendLive(String event, Map<String, dynamic> data) {
+    if (isSpectator) return;
     final RealtimeChannel? ch = _ch;
     if (ch == null) {
       _testLive?.call(NetLiveMessage(mySeat, event, data));
@@ -660,6 +694,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
   @override
   Future<Map<String, dynamic>> act(Map<String, dynamic> action) async {
     final SupabaseClient? c = _c;
+    if (isSpectator) return <String, dynamic>{'ok': false, 'reason': 'spectator'};
     if (c == null || isOver) return <String, dynamic>{'ok': false, 'reason': 'over'};
     final dynamic r = await c.rpc('nx_hg_act', params: <String, dynamic>{'p_match': matchId, 'p_act': action});
     return r is Map ? Map<String, dynamic>.from(r) : <String, dynamic>{'ok': false, 'reason': 'bad_reply'};
@@ -670,6 +705,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
 
   @override
   Future<Map<String, dynamic>?> readSecret(String slot) async {
+    if (isSpectator) return null;
     try {
       final Map<String, dynamic>? r = await _c!
           .from('nx_match_secrets')
@@ -704,7 +740,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
       'p_reason': 'finished',
     };
     final SupabaseClient? c = _c;
-    if (c == null) return _end;
+    if (c == null || isSpectator) return _end;
     try {
       dynamic r = await c.rpc('nx_finish_match', params: params);
       for (int i = 0; i < 16 && !_disposed && r is Map && r['pending'] == true; i++) {
@@ -730,7 +766,7 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
 
   /// Leave the running match (counts as forfeit).
   Future<void> forfeit() async {
-    if (isOver) return;
+    if (isOver || isSpectator) return;
     try {
       await _c?.rpc('nx_forfeit', params: <String, dynamic>{'p_match': matchId});
     } catch (_) {}

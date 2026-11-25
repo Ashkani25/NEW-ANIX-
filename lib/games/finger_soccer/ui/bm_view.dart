@@ -126,7 +126,7 @@ class _BermudaViewState extends State<BermudaView>
   double _tableT = -1;
 
   /// v13: online rematch on the score table (bm_rematch.dart); null offline, in tournaments and before the end.
-  FsRematchController? _rematch;
+  MatchRematchController? _rematch;
 
   /// v6 reference toast "یک دقیقه تا پایان بازی": seconds it stays up, fired once when the match clock enters its
   /// last minute.

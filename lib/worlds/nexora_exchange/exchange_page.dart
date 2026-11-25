@@ -8,6 +8,7 @@ import '../../core/catalog/catalog.dart';
 import '../../core/economy/bazaar_store.dart';
 import '../../core/economy/carrom_shop_view.dart';
 import '../../core/economy/gem_shop.dart';
+import '../../core/economy/victory_fx.dart';
 import '../../core/ui2/nx_kit.dart';
 import '../../games/finger_soccer/core/bm_data.dart';
 import '../../games/finger_soccer/core/bm_engine.dart';
@@ -1481,6 +1482,24 @@ class _GemTeamsTabState extends ConsumerState<_GemTeamsTab> {
                     ]),
                   ),
                 ]),
+              ),
+            ),
+          ),
+          // the gem item for every online game (victory_fx.dart)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(NxSpace.md, NxSpace.sm, NxSpace.md, 0),
+              child: ListTile(
+                tileColor: visual.surface.withValues(alpha: .7),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14), side: BorderSide(color: kGemColor.withValues(alpha: .45))),
+                leading: const Icon(Icons.auto_awesome_rounded, color: kGemColor),
+                title: Text(context.tx('افکت پیروزی · همه بازی‌ها', 'Victory effects · every game'),
+                    style: TextStyle(color: visual.text, fontWeight: FontWeight.w800)),
+                subtitle: Text(context.tx('روی صفحه‌ی برد بازی‌های آنلاین', 'On the online win screen of any game'),
+                    style: TextStyle(color: visual.muted, fontSize: 12)),
+                trailing: const NxGemIcon(size: 18),
+                onTap: () => showVictoryFxShop(context, fa: context.isFa),
               ),
             ),
           ),

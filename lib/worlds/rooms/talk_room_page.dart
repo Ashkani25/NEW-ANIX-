@@ -414,6 +414,18 @@ class _TalkRoomPageState extends ConsumerState<TalkRoomPage> {
     if (mounted) await _refresh();
   }
 
+  /// RS-01: watch the running match read-only (spectator). Nothing is sent from this phone; room voice stays as it is.
+  Future<void> _watchMatch(String matchId) async {
+    if (_inMatch) return;
+    _inMatch = true;
+    _lastMatch = matchId;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => OnlineMatchPage(matchId: matchId, gameId: _game, spectate: true),
+    ));
+    _inMatch = false;
+    if (mounted) await _refresh();
+  }
+
   // ------------------------------------------------------------------ chat
   Future<void> _send() async {
     final String t = _input.text.trim();
@@ -1054,6 +1066,12 @@ class _TalkRoomPageState extends ConsumerState<TalkRoomPage> {
               if (iAmPicked && _room?['match_id'] != null)
                 TextButton(
                     onPressed: () => _openMatch('${_room!['match_id']}'), child: Text(context.tx('ورود', 'Rejoin'))),
+              // RS-01: room members who are not playing watch the match read-only
+              if (!iAmPicked && _room?['match_id'] != null && isSpectatableGame(_game))
+                TextButton.icon(
+                    onPressed: () => _watchMatch('${_room!['match_id']}'),
+                    icon: const Icon(Icons.visibility_rounded, size: 16),
+                    label: Text(context.tx('تماشا', 'Watch'))),
             ]),
           )
         else ...<Widget>[

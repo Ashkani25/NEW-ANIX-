@@ -175,13 +175,16 @@ GoRouter buildRouter(WidgetRef ref) {
           action: state.uri.queryParameters['action'],
         ),
       ),
-      // Back into a live online match after the app was killed (MatchResumeWatcher, match_resume.dart).
+      // Back into a live online match after the app was killed (MatchResumeWatcher, match_resume.dart), or watching
+      // one (spectator, '?watch=1').
       GoRoute(
         path: '/match/:id',
         builder: (context, state) => OnlineMatchPage(
           matchId: state.pathParameters['id'] ?? '',
           gameId: state.uri.queryParameters['game'] ?? '',
           tournamentMatchId: state.uri.queryParameters['t'],
+          // RS-01: '?watch=1' opens the match read-only (room member / invited to watch)
+          spectate: state.uri.queryParameters['watch'] == '1',
         ),
       ),
       GoRoute(
