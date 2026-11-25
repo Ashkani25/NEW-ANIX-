@@ -1,0 +1,61 @@
+// Vendored copy of flutter_poolakey 2.2.0+1.0.0 (pub.dev). The upstream build.gradle still
+// uses jcenter() and AGP 7.4.2, which current Gradle rejects. Only this file and the
+// manifest's package attribute were changed; the Kotlin and Dart sources are upstream's.
+group 'ir.cafebazaar.flutter_poolakey'
+version '2.2.0+1.0.0'
+
+buildscript {
+    ext.kotlin_version = '1.9.24'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+def poolakeyVersion = '2.2.0'
+
+android {
+    namespace 'ir.cafebazaar.flutter_poolakey'
+    compileSdk 35
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        minSdk 21
+        buildConfigField "String", "POOLAKEY_VERSION", "\"${poolakeyVersion}\""
+    }
+}
+
+dependencies {
+    implementation "com.github.cafebazaar.Poolakey:poolakey:${poolakeyVersion}"
+}
