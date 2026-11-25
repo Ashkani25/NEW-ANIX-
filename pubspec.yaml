@@ -17,6 +17,7 @@ dependencies:
   flame: ^1.22.0
   flame_forge2d: ^0.18.2+2
   supabase_flutter: ^2.15.4
+  flutter_poolakey: ^2.2.0+1.0.0 # Cafe Bazaar in-app billing (coin / gem packs)
   livekit_client: ^2.13.2
   image_picker: ^1.2.0
   file_picker: ^8.1.7
