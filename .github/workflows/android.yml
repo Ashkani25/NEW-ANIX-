@@ -9,6 +9,12 @@ on:
         description: 'Publish a GitHub Release from the dispatched branch under this tag (e.g. anix-fs-v7). Empty = the main-branch rules below.'
         required: false
         default: ''
+      store:
+        description: 'Store build: bazaar = no GitHub self-updater, no REQUEST_INSTALL_PACKAGES, never published as a GitHub Release. Empty = sideload build.'
+        required: false
+        default: ''
+        type: choice
+        options: ['', 'bazaar']
   # Weekly keep-alive: restoring the signing-key cache resets GitHub's 7-day eviction clock, so the app's
   # signing identity never rotates (a rotated key would stop new APKs installing over old ones).
   schedule:
@@ -29,7 +35,9 @@ env:
   # under that tag, same files, same signing key, same vc= marker for the in-app updater.
   RELEASE_TAG: ${{ (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') && inputs.release_tag || format('anix-v1.0.{0}', github.run_number) }}
   VERSION_NAME: 1.0.${{ github.run_number }}
-  PUBLISH: ${{ ((github.event_name == 'workflow_dispatch' && inputs.release_tag != '') || (github.event_name != 'schedule' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')))) && 'true' || 'false' }}
+  # Store flavour (STORE dart-define). Store builds are uploaded as artifacts only, never as a GitHub Release.
+  STORE: ${{ github.event_name == 'workflow_dispatch' && inputs.store || '' }}
+  PUBLISH: ${{ (github.event_name != 'workflow_dispatch' || inputs.store == '') && ((github.event_name == 'workflow_dispatch' && inputs.release_tag != '') || (github.event_name != 'schedule' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')))) && 'true' || 'false' }}
   # Public values only (the anon/publishable key is designed to ship inside the app; RLS protects the data).
   SUPABASE_URL: https://eisstodgncimypdawisy.supabase.co
   SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVpc3N0b2RnbmNpbXlwZGF3aXN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQyMjkwMTAsImV4cCI6MjEwOTgwNTAxMH0.uEPldAQjJdRyZTGXaz_OpFR7WpFXMiPXlW1S34cR3p8
@@ -91,6 +99,30 @@ jobs:
           fi
           # Public certificate fingerprint only (never the key itself).
           keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep -E 'SHA256:' || true
+
+      # Real release key (Cafe Bazaar / any store): used when all four secrets exist, otherwise the permanent CI key
+      # above keeps signing (sideload installs). The keystore itself is never committed or printed.
+      - name: Release keystore (if configured)
+        if: github.event_name != 'schedule'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            mkdir -p "$RUNNER_TEMP/nxkey"
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/nxkey/release.jks"
+            if ! keytool -list -keystore "$RUNNER_TEMP/nxkey/release.jks" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+              echo "::error::ANDROID_KEYSTORE_* secrets do not open the keystore / alias"; exit 1
+            fi
+            keytool -list -v -keystore "$RUNNER_TEMP/nxkey/release.jks" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | grep -E 'SHA256:' || true
+            echo "NX_KEYSTORE_PATH=$RUNNER_TEMP/nxkey/release.jks" >> $GITHUB_ENV
+            echo "NX_RELEASE_SIGNING=true" >> $GITHUB_ENV
+            echo "Signing with the release keystore."
+          else
+            echo "::warning::No release keystore secrets (ANDROID_KEYSTORE_BASE64/_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD); signing with the CI install key. Store uploads need the release key."
+          fi
 
       - name: Keep-alive run stops here
         if: github.event_name == 'schedule'
@@ -189,9 +221,16 @@ jobs:
           import glob
           m = 'android/app/src/main/AndroidManifest.xml'
           s = open(m).read()
-          if 'REQUEST_INSTALL_PACKAGES' not in s:
+          import os
+          store = os.environ.get('STORE', '')
+          if store:
+              # Store builds update through the store only: no sideload install permission, no updater FileProvider.
+              import re as _re
+              s = _re.sub(r'\s*<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"\s*/>', '', s)
+              print('store build (%s): REQUEST_INSTALL_PACKAGES and updater provider left out' % store)
+          if not store and 'REQUEST_INSTALL_PACKAGES' not in s:
               s = s.replace('<application', '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n    <application', 1)
-          if 'nxupdate' not in s:
+          if not store and 'nxupdate' not in s:
               s = s.replace('</application>',
                   '    <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.nxupdate"\n'
                   '            android:exported="false" android:grantUriPermissions="true">\n'
@@ -245,6 +284,43 @@ jobs:
             sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle
           fi
           head -20 $M
+
+      - name: Release signing config (if configured)
+        if: env.KEEPALIVE != 'true' && env.NX_RELEASE_SIGNING == 'true'
+        run: |
+          python3 - <<'PY'
+          import glob, re
+          for f in glob.glob('android/app/build.gradle*'):
+              g = open(f).read()
+              if 'NX_KEYSTORE_PATH' in g:
+                  continue
+              kts = f.endswith('.kts')
+              if kts:
+                  cfg = ('    signingConfigs {\n        create("nxRelease") {\n'
+                         '            storeFile = file(System.getenv("NX_KEYSTORE_PATH"))\n'
+                         '            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")\n'
+                         '            keyAlias = System.getenv("ANDROID_KEY_ALIAS")\n'
+                         '            keyPassword = System.getenv("ANDROID_KEY_PASSWORD")\n        }\n    }\n')
+                  use = 'signingConfig = signingConfigs.getByName("nxRelease")'
+                  g2 = re.sub(r'signingConfig\s*=\s*signingConfigs\.getByName\("debug"\)', use, g)
+              else:
+                  cfg = ("    signingConfigs {\n        nxRelease {\n"
+                         "            storeFile file(System.getenv('NX_KEYSTORE_PATH'))\n"
+                         "            storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')\n"
+                         "            keyAlias System.getenv('ANDROID_KEY_ALIAS')\n"
+                         "            keyPassword System.getenv('ANDROID_KEY_PASSWORD')\n        }\n    }\n")
+                  use = 'signingConfig signingConfigs.nxRelease'
+                  g2 = re.sub(r'signingConfig\s+signingConfigs\.debug', use, g)
+              if g2 == g:
+                  raise SystemExit('release signing: could not find the debug signingConfig line in ' + f)
+              g2 = re.sub(r'(\n\s*buildTypes\s*\{)', '\n' + cfg.rstrip('\n') + r'\1', g2, count=1)
+              open(f, 'w').write(g2)
+              print('release signing config added to', f)
+          PY
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: Pub get
         if: env.KEEPALIVE != 'true'
@@ -304,12 +380,17 @@ jobs:
 
       - name: Build split-per-ABI release APKs
         if: env.KEEPALIVE != 'true'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -o pipefail
           flutter build apk --release --split-per-abi \
             --build-number=$((300 + ${{ github.run_number }})) \
             --build-name=$VERSION_NAME \
             --dart-define=APP_VC=$((300 + ${{ github.run_number }})) \
+            --dart-define=STORE=$STORE \
             --dart-define=GAMES_SUPABASE_URL=$GAMES_SUPABASE_URL \
             --dart-define=GAMES_SUPABASE_ANON_KEY=$GAMES_SUPABASE_ANON_KEY \
             --dart-define=SOCIAL_SUPABASE_URL=$SOCIAL_SUPABASE_URL \
@@ -320,12 +401,17 @@ jobs:
 
       - name: Build universal release APK
         if: env.KEEPALIVE != 'true'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -o pipefail
           flutter build apk --release \
             --build-number=$((300 + ${{ github.run_number }})) \
             --build-name=$VERSION_NAME \
             --dart-define=APP_VC=$((300 + ${{ github.run_number }})) \
+            --dart-define=STORE=$STORE \
             --dart-define=GAMES_SUPABASE_URL=$GAMES_SUPABASE_URL \
             --dart-define=GAMES_SUPABASE_ANON_KEY=$GAMES_SUPABASE_ANON_KEY \
             --dart-define=SOCIAL_SUPABASE_URL=$SOCIAL_SUPABASE_URL \
@@ -360,13 +446,18 @@ jobs:
           grep -E "^targetSdkVersion:'(3[4-9]|[4-9][0-9])'" badging.txt
           grep -E "launchable-activity" badging.txt
           grep -E "application-label:'ANIX PRO'" badging.txt
+          if [ -n "$STORE" ]; then
+            if grep -q "REQUEST_INSTALL_PACKAGES" badging.txt; then echo "::error::store build still requests REQUEST_INSTALL_PACKAGES"; exit 1; fi
+            echo "store build ($STORE): no REQUEST_INSTALL_PACKAGES ✓"
+          fi
+          "$APKSIGNER" verify --print-certs out/ANIX-universal.apk | grep -E 'SHA-256' || true
           head -3 badging.txt
 
       - name: Upload release files
         if: env.KEEPALIVE != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ANIX-apks
+          name: ANIX-apks${{ env.STORE != '' && format('-{0}', env.STORE) || '' }}
           path: out/*
           retention-days: 30
 
@@ -375,7 +466,7 @@ jobs:
         if: env.KEEPALIVE != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ANIX-arm64-v8a-apk
+          name: ANIX-arm64-v8a-apk${{ env.STORE != '' && format('-{0}', env.STORE) || '' }}
           path: out/ANIX-arm64-v8a.apk
           if-no-files-found: error
           retention-days: 30

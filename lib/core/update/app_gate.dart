@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../online/online_service.dart';
 import 'app_updater.dart';
+import 'build_flavor.dart';
 
 /// Server-driven app gate (P0 #3): force-update below a minimum build and maintenance mode.
 ///
@@ -116,8 +117,14 @@ class AppGate extends ChangeNotifier {
 
   /// Opens the store page (store_url) or, for sideload builds without one, starts the in-app update.
   Future<void> openUpdate() async {
-    final String url = status?.storeUrl ?? '';
-    if (url.isNotEmpty) {
+    final String configured = status?.storeUrl ?? '';
+    final List<String> urls = <String>[
+      if (configured.isNotEmpty) configured,
+      if (BuildFlavor.isStoreBuild) BuildFlavor.defaultStoreUrl,
+      if (BuildFlavor.isStoreBuild) BuildFlavor.storeWebUrl,
+    ];
+    for (final String url in urls) {
+      if (url.isEmpty) continue;
       try {
         if (await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)) return;
       } catch (_) {}
