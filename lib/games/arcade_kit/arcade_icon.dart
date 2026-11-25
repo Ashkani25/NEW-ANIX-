@@ -31,6 +31,7 @@ const Map<String, ArcadeIconSpec> kArcadeIcons = <String, ArcadeIconSpec>{
   'bubble_shooter': ArcadeIconSpec(Icons.bubble_chart_rounded, Color(0xFF39E1FF), Color(0xFFFF4FA3)),
   'knife_hit': ArcadeIconSpec(Icons.gps_fixed_rounded, Color(0xFFFFC94A), Color(0xFF8A4B1E)),
   'game_2048': ArcadeIconSpec(Icons.filter_9_plus_rounded, Color(0xFFFFB13D), Color(0xFFFF4F9A)),
+  'gate_shooter': ArcadeIconSpec(Icons.groups_rounded, Color(0xFF3FA2FF), Color(0xFFFFD34E)),
 };
 
 /// The game's pedestal art `(assets/arcade/pedestals/<id>.webp)` — or, when the art is not there yet, a premium
