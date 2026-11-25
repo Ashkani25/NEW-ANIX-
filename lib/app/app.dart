@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/audio/sfx_service.dart';
@@ -12,6 +14,7 @@ import '../core/online/cloud_profile_sync.dart';
 import '../core/online/invite_watcher.dart';
 import '../core/online/match_resume.dart';
 import '../core/online/online_service.dart';
+import '../core/push/push_service.dart';
 import '../core/settings/app_settings.dart';
 import '../core/ui2/oracle_buddy.dart';
 import '../core/update/app_gate.dart';
@@ -71,6 +74,8 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
       _announcements.sync();
       AppUpdater.instance.start();
       AppGate.instance.start();
+      PushService.instance.onOpen = (String route) => _router.push(route);
+      unawaited(PushService.instance.start(locale: () => ref.read(settingsProvider).languageCode));
     });
   }
 
@@ -86,6 +91,8 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
 
   @override
   void dispose() {
+    AppGate.instance.stop();
+    PushService.instance.stop();
     _invites.dispose();
     _resume.dispose();
     _announcements.dispose();

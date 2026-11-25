@@ -11,8 +11,9 @@ import 'build_flavor.dart';
 
 /// In-app updater for THIS app only (Flutter redesign line).
 ///
-/// Reads releases of ashkandevloper-code/cocos-c- and keeps only tags `anix-<n>` (prerelease or full release)
-/// whose notes carry `vc=<versionCode>`. The React Native app's "latest" release is never read.
+/// Reads releases of [repo] (Ashkani25/NEW-ANIX-, the app's own repository) and keeps only tags `anix-*`
+/// (e.g. `anix-v1.0.4`, prerelease or full release) whose notes carry `vc=<versionCode>` (written by the Android
+/// workflow) and that ship [apkName].
 /// The current versionCode is injected by CI (`--dart-define=APP_VC=<run number>`, same value as
 /// `--build-number`).
 class AppRelease {
@@ -29,7 +30,7 @@ class AppUpdater extends ChangeNotifier {
   static final AppUpdater instance = AppUpdater._();
 
   static const int currentVc = int.fromEnvironment('APP_VC', defaultValue: 0);
-  static const String repo = 'ashkandevloper-code/cocos-c-';
+  static const String repo = 'Ashkani25/NEW-ANIX-';
   static const String tagPrefix = 'anix-';
   static const String apkName = 'ANIX-universal.apk';
   static const MethodChannel _ch = MethodChannel('nexora/updater');
@@ -51,6 +52,9 @@ class AppUpdater extends ChangeNotifier {
     _life ??= AppLifecycleListener(onResume: () => unawaited(check()));
     _timer ??= Timer.periodic(const Duration(minutes: 30), (_) => check());
   }
+
+  /// GitHub API list of this app's releases.
+  static Uri get releasesApi => Uri.parse('https://api.github.com/repos/$repo/releases?per_page=40');
 
   static final RegExp _vcRe = RegExp(r'vc\s*=\s*(\d+)');
 
@@ -99,7 +103,7 @@ class AppUpdater extends ChangeNotifier {
     _checking = true;
     try {
       final HttpClient c = HttpClient()..connectionTimeout = const Duration(seconds: 12);
-      final HttpClientRequest rq = await c.getUrl(Uri.parse('https://api.github.com/repos/$repo/releases?per_page=40'));
+      final HttpClientRequest rq = await c.getUrl(releasesApi);
       rq.headers.set('Accept', 'application/vnd.github+json');
       rq.headers.set('User-Agent', 'anix-app');
       final HttpClientResponse rs = await rq.close().timeout(const Duration(seconds: 20));

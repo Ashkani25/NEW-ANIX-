@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -70,7 +69,8 @@ class AppGate extends ChangeNotifier {
   void staffPeek() {
     _peekUntil = DateTime.now().add(const Duration(minutes: 5));
     notifyListeners();
-    Timer(const Duration(minutes: 5, seconds: 1), notifyListeners);
+    _peekTimer?.cancel();
+    _peekTimer = Timer(const Duration(minutes: 5, seconds: 1), notifyListeners);
   }
 
   AppGateBlock get block {
@@ -81,20 +81,41 @@ class AppGate extends ChangeNotifier {
     return b;
   }
 
+  OnlineService? _online;
+  Timer? _peekTimer;
+
+  void _onAuthChange() {
+    final OnlineService? o = _online;
+    if (o != null && o.uid != _uid) {
+      _uid = o.uid;
+      unawaited(refresh());
+    }
+  }
+
   void start() {
     unawaited(refresh());
     _life ??= AppLifecycleListener(onResume: () => unawaited(refresh()));
     _timer ??= Timer.periodic(const Duration(minutes: 10), (_) => refresh());
     final OnlineService? o = OnlineService.current;
-    if (o != null) {
+    if (o != null && !identical(o, _online)) {
+      _online?.removeListener(_onAuthChange);
+      _online = o;
       _uid = o.uid;
-      o.addListener(() {
-        if (o.uid != _uid) {
-          _uid = o.uid;
-          unawaited(refresh());
-        }
-      });
+      o.addListener(_onAuthChange);
     }
+  }
+
+  /// Undoes [start] (the app widget's dispose): no periodic timer, lifecycle hook or auth listener outlives the app
+  /// (a pending periodic timer after the widget tree is gone also fails widget tests). [start] can be called again.
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+    _peekTimer?.cancel();
+    _peekTimer = null;
+    _life?.dispose();
+    _life = null;
+    _online?.removeListener(_onAuthChange);
+    _online = null;
   }
 
   bool get loading => _loading;

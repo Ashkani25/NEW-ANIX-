@@ -38,12 +38,24 @@ Settings → Account & data → **Delete account permanently** (`lib/worlds/sett
 2. **Games project** `nx_bridge_forget_user(p_user)` (service_role only, `supabase/games/migrations/20261125200000_p0_01_account_deletion.sql`),
    called by core over the pg_net bridge: hosted rooms pass to another member, tournaments to the platform owner, mirror profile + game rows deleted.
    The immutable tournament ledger/audit keep the bare uuid for accounting.
-3. **Storage**: the client lists its files (`nx_my_storage_objects`) and removes them through the Storage API after a dry-run check; the RPC
-   then clears any leftover object rows (legacy `avatars`/`chat` buckets have no client delete policy, so their blobs may stay orphaned in the
-   bucket store until a service-side cleanup runs).
+3. **Storage**: the client lists its files (`nx_my_storage_objects`) and removes them through the Storage API after a dry-run check.
+   Leftovers (legacy `avatars`/`chat` buckets have no client delete policy) are queued by the RPC in `nx_storage_purge_queue`
+   (`supabase/migrations/20261125210100_p0_01b_storage_purge.sql`, P0 #1b) and removed — blob and row — by the Edge Function
+   `supabase/functions/nx-storage-purge` (kicked after the deletion and by pg_cron every 15 min).
+   **Not deployed yet**: until the deploy steps in `supabase/functions/nx-storage-purge/README.md` are done, the queue only fills up.
 4. Client flow: confirm dialog (type DELETE / «حذف» + password if any) → dry run → storage cleanup → delete → local wipe → local sign-out → `/auth`.
    Guests (local-only) still get "Erase all data on this phone".
 
+## 5. Ban evasion hold (implemented, P0 #7c)
+`supabase/migrations/20261125210200_p0_07c_ban_hold.sql`. When a **banned** account is deleted (self-service or by staff; trigger on
+`auth.users`), `nx_ban_holds` keeps keyed HMAC-SHA256 hashes (pepper in Vault `nx_ban_hold_pepper`) of the normalised username, e-mail
+and the app's random install id (`lib/core/safety/install_id.dart`, sent with sign-up / sign-in / delete). Expiry = the ban
+(`banned_until` when finite, otherwise until staff clear it with `nx_owner_ban_hold_clear`; list with `nx_owner_ban_holds`).
+Checked on sign-up and e-mail change (auth.users trigger, error `banned`), username claim (profiles trigger -> `username_reserved`,
+`nx_username_available` false) and sign-in (client calls `nx_install_held` and signs out; the `nx-login` Edge Function refuses with
+`user_banned` once redeployed). Described in the privacy policy (fa + en).
+Reports: kinds `comment`, `story`, `profile` and `community` are accepted (`20261125210000_p0_07c_report_kinds.sql`); report buttons on
+comments, stories and the online match result (report an opponent).
 ## 5. Game integrity: server match sweep, move rate limit, resume (games project)
 Migration `supabase/games/migrations/20261126100000_gi_match_sweep_rate.sql` (applied live 2026-11-25; rollback
 `supabase/maintenance/rollback_gi_01_games.sql`; probe `supabase/tests/security/games_gi_01_probe.sql`).

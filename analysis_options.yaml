@@ -4,6 +4,8 @@ analyzer:
     deprecated_member_use: ignore
   exclude:
     - build/**
+    # vendored plugin sources (Cafe Bazaar poolakey): upstream style, not ours to restyle
+    - third_party/**
 linter:
   rules:
     avoid_print: false
