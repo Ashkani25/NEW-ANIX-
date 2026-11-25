@@ -365,7 +365,6 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
   }
 
   /// Tests: world-space tap target of the next tile (null when none).
-  @visibleForTesting
   Offset? debugNextTap() {
     final List<PtTile> n = engine.next;
     if (n.isEmpty || lastSize.isEmpty) return null;
@@ -783,12 +782,13 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
       c.translate(s.width / 2, s.height * 0.3);
       c.scale(pop);
       final double a = (1 - k * k).clamp(0.0, 1.0);
+      c.saveLayer(Rect.fromCenter(center: Offset.zero, width: s.width, height: 120), Paint()..color = Colors.white.withValues(alpha: a));
       _text.draw(c, _judge, const Offset(0, -18), 22,
           family: isFa ? 'Lalezar' : 'ChakraPetch', weight: FontWeight.w700, rtl: isFa,
-          color: Color.lerp(PtPalette.goldLight, Colors.white, 0.3)!.withValues(alpha: a),
-          shadows: <Shadow>[Shadow(color: PtPalette.gold.withValues(alpha: a * 0.8), blurRadius: 14)]);
+          color: const Color(0xFFFFF5DA), shadows: const <Shadow>[Shadow(color: Color(0xCCE6C276), blurRadius: 14)]);
       _text.draw(c, '×${engine.combo}', const Offset(0, 12), 26, family: 'ChakraPetch', weight: FontWeight.w700, rtl: false,
-          color: Colors.white.withValues(alpha: a), shadows: <Shadow>[Shadow(color: PtPalette.cyan.withValues(alpha: a), blurRadius: 12)]);
+          color: Colors.white, shadows: const <Shadow>[Shadow(color: PtPalette.cyan, blurRadius: 12)]);
+      c.restore();
       c.restore();
     }
     // song complete → endless banner
@@ -804,11 +804,13 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
           const Color(0xFF1A0F4A).withValues(alpha: 0.82 * a),
           Colors.transparent,
         ], stops: const <double>[0, 0.2, 0.8, 1]).createShader(band));
+      c.saveLayer(band, Paint()..color = Colors.white.withValues(alpha: a));
       _text.draw(c, tx('ترانه کامل شد!', 'SONG COMPLETE!'), Offset(s.width / 2, y - 14), 30,
           family: isFa ? 'Lalezar' : 'ChakraPetch', weight: FontWeight.w700, rtl: isFa,
-          color: PtPalette.goldLight.withValues(alpha: a), shadows: <Shadow>[Shadow(color: PtPalette.gold.withValues(alpha: a), blurRadius: 18)]);
+          color: PtPalette.goldLight, shadows: const <Shadow>[Shadow(color: PtPalette.gold, blurRadius: 18)]);
       _text.draw(c, tx('∞ حالت بی‌پایان · سریع‌تر!', '∞ ENDLESS · FASTER!'), Offset(s.width / 2, y + 22), 15,
-          family: isFa ? 'Estedad' : 'ChakraPetch', weight: FontWeight.w700, rtl: isFa, color: Colors.white.withValues(alpha: a));
+          family: isFa ? 'Estedad' : 'ChakraPetch', weight: FontWeight.w700, rtl: isFa, color: Colors.white);
+      c.restore();
     }
     // results: earned stars under the shell's game-over title
     if (phase == PtPhase.over && _overT > 0.5) {
@@ -834,7 +836,7 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
           ? tx('${engine.loops} دور کامل · بهترین ترکیب ${engine.bestCombo}', '${engine.loops} laps · best combo ${engine.bestCombo}')
           : tx('$pct٪ از ترانه · بهترین ترکیب ${engine.bestCombo}', '$pct% of the song · best combo ${engine.bestCombo}');
       _text.draw(c, line, Offset(s.width / 2, y + 44), 15, family: isFa ? 'Estedad' : 'ChakraPetch', weight: FontWeight.w700, rtl: isFa,
-          color: Colors.white.withValues(alpha: k.clamp(0.0, 1.0)));
+          shadows: const <Shadow>[Shadow(color: Color(0xCC000000), blurRadius: 6)]);
     }
   }
 
