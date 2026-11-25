@@ -44,6 +44,13 @@ env:
   LIVEKIT_URL: wss://nexora-space-xzjzlfyl.livekit.cloud
   # Cafe Bazaar in-app billing RSA public key (repo Settings -> Variables -> BAZAAR_RSA_KEY). Public by design.
   BAZAAR_RSA_KEY: ${{ vars.BAZAAR_RSA_KEY }}
+  # Remote push (FCM) client config — public values (repo Settings -> Variables). Empty FCM_ENABLED = push off.
+  # Server side also needs the push-send secret FCM_SERVICE_ACCOUNT. See docs/PUSH_NOTIFICATIONS.md.
+  FCM_ENABLED: ${{ vars.FCM_ENABLED }}
+  FCM_API_KEY: ${{ vars.FCM_API_KEY }}
+  FCM_APP_ID: ${{ vars.FCM_APP_ID }}
+  FCM_SENDER_ID: ${{ vars.FCM_SENDER_ID }}
+  FCM_PROJECT_ID: ${{ vars.FCM_PROJECT_ID }}
   # Second Supabase project (games, rooms, matchmaking, tournaments, realtime match state).
   GAMES_SUPABASE_URL: https://eyzafhrefnqlwcjpcdyg.supabase.co
   GAMES_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5emFmaHJlZm5xbHdjanBjZHlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4OTUzNjcsImV4cCI6MjExMDQ3MTM2N30.YfdEhbEbvbQ738snwc5C47LYx-NYRXywX66dgMEZh-M
@@ -409,6 +416,9 @@ jobs:
             --dart-define=SUPABASE_URL=$SUPABASE_URL \
             --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
             --dart-define=BAZAAR_RSA_KEY="$BAZAAR_RSA_KEY" \
+            --dart-define=FCM_ENABLED="$FCM_ENABLED" --dart-define=FCM_API_KEY="$FCM_API_KEY" \
+            --dart-define=FCM_APP_ID="$FCM_APP_ID" --dart-define=FCM_SENDER_ID="$FCM_SENDER_ID" \
+            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID" \
             --dart-define=LIVEKIT_URL=$LIVEKIT_URL 2>&1 | tee build-apk.txt
 
       - name: Build universal release APK
@@ -431,6 +441,9 @@ jobs:
             --dart-define=SUPABASE_URL=$SUPABASE_URL \
             --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
             --dart-define=BAZAAR_RSA_KEY="$BAZAAR_RSA_KEY" \
+            --dart-define=FCM_ENABLED="$FCM_ENABLED" --dart-define=FCM_API_KEY="$FCM_API_KEY" \
+            --dart-define=FCM_APP_ID="$FCM_APP_ID" --dart-define=FCM_SENDER_ID="$FCM_SENDER_ID" \
+            --dart-define=FCM_PROJECT_ID="$FCM_PROJECT_ID" \
             --dart-define=LIVEKIT_URL=$LIVEKIT_URL 2>&1 | tee -a build-apk.txt
 
       - name: Package release files

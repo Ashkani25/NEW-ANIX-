@@ -9,6 +9,7 @@ import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../core/online/online_service.dart';
+import '../../core/push/push_service.dart';
 import '../../core/settings/app_settings.dart';
 import 'data/models.dart';
 import 'data/tournament_repository.dart';
@@ -196,6 +197,8 @@ class TournamentWatcher with WidgetsBindingObserver {
       _ => 'n:${n.id}',
     };
     if (!_foreground) {
+      // With remote push registered, FCM already puts this event in the tray (same text): no duplicate.
+      if (PushService.instance.active) return;
       unawaited(TLocalNotifier.show(key, n.title, body, payload: route));
       return;
     }
