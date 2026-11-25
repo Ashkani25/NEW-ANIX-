@@ -150,6 +150,13 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
     if (mounted) setState(() {});
   }
 
+  /// Phase changes rebuild the widget layer (HUD buttons, overlays); the canvas repaints every frame anyway.
+  void _setPhase(PtPhase p) {
+    if (phase == p) return;
+    phase = p;
+    if (mounted) setState(() {});
+  }
+
   void _pause() {
     if (phase != PtPhase.play) return;
     setState(() => phase = PtPhase.paused);
@@ -188,7 +195,7 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
     final bool live = phase == PtPhase.play && widget.run.playing && !widget.run.over;
     if (phase == PtPhase.countdown) {
       _countdown -= dt;
-      if (_countdown <= 0) phase = PtPhase.play;
+      if (_countdown <= 0) _setPhase(PtPhase.play);
     }
     if (live) {
       _introT += dt;
@@ -288,7 +295,7 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
   }
 
   void _onMiss() {
-    phase = PtPhase.over;
+    _setPhase(PtPhase.over);
     _overT = 0;
     audio.miss();
     HapticFeedback.heavyImpact();
@@ -394,6 +401,7 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
       _paintMiss(canvas, size);
       _paintProgress(canvas, size);
       _paintCaptions(canvas, size);
+      _paintCountdown(canvas, size);
     }
     _paintVignette(canvas, size);
   }
@@ -594,15 +602,28 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
     c.drawRect(
         f,
         Paint()
-          ..blendMode = BlendMode.plus
           ..shader = LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
             colors: <Color>[
-              const Color(0xFF6B4BFF).withValues(alpha: 0.55),
-              PtPalette.gold.withValues(alpha: 0.42),
-              PtPalette.goldLight.withValues(alpha: 0.75),
+              const Color(0xFF5B3BD9).withValues(alpha: 0.9),
+              const Color(0xFF9A6BE8).withValues(alpha: 0.85),
+              const Color(0xFFD9A84E).withValues(alpha: 0.9),
+              PtPalette.goldLight,
             ],
+            stops: const <double>[0, 0.45, 0.85, 1],
+          ).createShader(f));
+    // the rail and medallion stay visible through the fill as engraved gold
+    final double mr = math.min(body.width * 0.2, 26);
+    paintMedallion(c, Offset(body.center.dx, body.bottom - rowH * 0.5), mr, glow: t.holding ? 0.6 : 0.2);
+    c.drawRect(
+        f,
+        Paint()
+          ..blendMode = BlendMode.plus
+          ..shader = LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: <Color>[Colors.white.withValues(alpha: 0.0), Colors.white.withValues(alpha: 0.12), Colors.white.withValues(alpha: 0.0)],
           ).createShader(f));
     c.restore();
     if (t.holding || !t.holdDone) {
@@ -840,6 +861,25 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
     }
   }
 
+  void _paintCountdown(Canvas c, Size s) {
+    if (phase != PtPhase.countdown) return;
+    final int n = _countdown.ceil().clamp(1, 3);
+    final double f = _countdown - _countdown.floor(); // 1 -> 0 within each second
+    final double k = Curves.easeOutBack.transform(((1 - f) * 3).clamp(0.0, 1.0));
+    final Offset o = Offset(s.width / 2, s.height * 0.45);
+    c.drawCircle(o, 70, Paint()..shader = RadialGradient(colors: <Color>[PtPalette.gold.withValues(alpha: 0.35 * f + 0.1), Colors.transparent]).createShader(Rect.fromCircle(center: o, radius: 70)));
+    c.drawPath(khatamPath(o, 62, rot: clock), Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..shader = goldShader(Rect.fromCircle(center: o, radius: 62)));
+    c.save();
+    c.translate(o.dx, o.dy);
+    c.scale(0.6 + 0.4 * k);
+    _text.draw(c, '$n', Offset.zero, 84, family: 'ChakraPetch', weight: FontWeight.w700, rtl: false,
+        shadows: const <Shadow>[Shadow(color: PtPalette.gold, blurRadius: 28)]);
+    c.restore();
+  }
+
   void _paintVignette(Canvas c, Size s) {
     final Rect r = Offset.zero & s;
     c.drawRect(r, Paint()
@@ -886,20 +926,6 @@ class PianoTilesBoardState extends SoloBoardState<PianoTilesBoard> with WidgetsB
           ),
         ),
       if (phase == PtPhase.paused) Positioned.fill(child: _pauseCard()),
-      if (phase == PtPhase.countdown)
-        Positioned.fill(
-          child: IgnorePointer(
-            child: Center(
-              child: Text('${_countdown.ceil()}',
-                  style: const TextStyle(
-                      fontFamily: 'ChakraPetch',
-                      fontSize: 96,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                      shadows: <Shadow>[Shadow(color: PtPalette.gold, blurRadius: 30)])),
-            ),
-          ),
-        ),
     ]);
   }
 

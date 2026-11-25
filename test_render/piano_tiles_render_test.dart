@@ -1,6 +1,6 @@
 // Renders Piano Tiles inside the real solo shell on a 360x800 phone and saves PNGs:
 //   flutter test test_render/piano_tiles_render_test.dart
-// -> $SHOTS/games/piano_tiles/{0_ready,1_picker,2_start,3_play,4_hold,5_gameover,6_pause}.png
+// -> $SHOTS/games/piano_tiles/{0_ready,1_picker,2_start,3_play,4_hold,7_song_complete,6_pause,5_gameover}.png
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexora/core/storage/local_store.dart';
@@ -24,8 +24,12 @@ Future<void> frames(WidgetTester tester, int n) async {
 PianoTilesBoardState board(WidgetTester tester) => tester.state<PianoTilesBoardState>(find.byType(PianoTilesBoard));
 
 /// Taps the due tile; holds long tiles for [holdFrames] frames.
-Future<void> playOne(WidgetTester tester, {int gap = 10, int holdFrames = 0}) async {
+Future<void> playOne(WidgetTester tester, {int gap = 10, int holdFrames = 0, double lowY = 430}) async {
   final PianoTilesBoardState s = board(tester);
+  // tap like a player: when the due tile has come down into the lower half
+  for (int i = 0; i < 90 && s.engine.started && (s.debugNextTap()?.dy ?? 999) < lowY; i++) {
+    await frames(tester, 1);
+  }
   final Offset? at = s.debugNextTap();
   if (at == null) return;
   final bool hold = s.engine.next.first.isHold;
@@ -64,7 +68,9 @@ void main() {
         playerCount: 1,
         onFinish: (_) {},
       );
-      await tester.pumpWidget(shotApp(Directionality(
+      await tester.pumpWidget(shotApp(
+          theme: ThemeData.dark(useMaterial3: true).copyWith(textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Estedad')),
+          Directionality(
         textDirection: fa ? TextDirection.rtl : TextDirection.ltr,
         child: Builder(builder: (BuildContext c) => buildSoloGame(kPianoTilesDef, l)),
       )));
@@ -89,17 +95,27 @@ void main() {
         await playOne(tester, gap: 8, holdFrames: 30);
       }
       final PianoTilesBoardState s = board(tester);
+      for (int i = 0; i < 90 && s.debugNextTap()!.dy < 560; i++) {
+        await frames(tester, 1);
+      }
       final TestGesture g = await tester.startGesture(s.debugNextTap()!);
       await frames(tester, 14);
       await shoot(tester, '$dir/4_hold.png');
       await g.up();
       await frames(tester, 6);
+      // finish the song: 3 stars, «song complete» and endless mode
+      for (int i = 0; i < 80 && board(tester).engine.loops == 0; i++) {
+        await playOne(tester, gap: 2, holdFrames: 40);
+      }
+      await frames(tester, 24);
+      await shoot(tester, '$dir/7_song_complete.png');
       // pause card
       await tester.tap(find.byKey(const ValueKey<String>('pt_pause')));
       await frames(tester, 10);
       await shoot(tester, '$dir/6_pause.png');
       await tester.tap(find.byKey(const ValueKey<String>('pt_resume')));
       await frames(tester, 200);
+      await playOne(tester, gap: 4, holdFrames: 30);
       // miss: tap an empty cell next to the due tile
       final PianoTilesBoardState s2 = board(tester);
       final PtTile due = s2.engine.next.first;
