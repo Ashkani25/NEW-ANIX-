@@ -75,6 +75,7 @@ const List<String> kArcadeSoloIds = <String>[
   'bubble_shooter',
   'knife_hit',
   'game_2048',
+  'water_sort',
 ];
 
 const List<String> kArcadeIds = <String>[...kArcadeMultiIds, ...kArcadeSoloIds];
@@ -91,6 +92,7 @@ const Map<String, ArcadeDef> kArcadeDefs = <String, ArcadeDef>{
   'bubble_shooter': ArcadeDef(id: 'bubble_shooter', unitFa: 'امتیاز', unitEn: 'pts', bronze: 1500, silver: 5000, gold: 12000, daily: 3500),
   'knife_hit': ArcadeDef(id: 'knife_hit', unitFa: 'امتیاز', unitEn: 'pts', bronze: 40, silver: 120, gold: 260, daily: 90),
   'game_2048': ArcadeDef(id: 'game_2048', unitFa: 'امتیاز', unitEn: 'pts', bronze: 2000, silver: 8000, gold: 20000, daily: 5000),
+  'water_sort': ArcadeDef(id: 'water_sort', unitFa: 'امتیاز', unitEn: 'pts', bronze: 800, silver: 3000, gold: 8000, daily: 1500),
   // multiplayer — "score" is the game's own match score; medals count wins in a row vs Hard bots
   'kart_racing': ArcadeDef(id: 'kart_racing', unitFa: 'امتیاز', unitEn: 'pts', bronze: 1, silver: 3, gold: 5, daily: 1, multiplayer: true),
   'obstacle_race': ArcadeDef(id: 'obstacle_race', unitFa: 'امتیاز', unitEn: 'pts', bronze: 1, silver: 3, gold: 5, daily: 1, multiplayer: true),

@@ -23,6 +23,7 @@ void main() {
         'bubble_shooter',
         'knife_hit',
         'game_2048',
+        'water_sort',
       ];
       expect(kSoloDefs.length, ids.length);
       for (final String id in ids) {

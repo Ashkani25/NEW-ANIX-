@@ -4,6 +4,7 @@ import '../core/game_contract.dart';
 import 'solo_kit.dart';
 import 'ui/action_boards.dart';
 import 'ui/puzzle_boards.dart';
+import '../water_sort/water_sort_board.dart';
 
 /// ===================== SOLO ARCADE REGISTRY =====================
 /// The ten single-player arcade games, registered like every other ANIX game so they get
@@ -111,6 +112,17 @@ final List<SoloDef> kSoloDefs = <SoloDef>[
     control: SoloControl.dpad,
     accent: const Color(0xFFFF8FD1),
     board: (BuildContext c, SoloRun r) => World2048Board(run: r),
+  ),
+  SoloDef(
+    id: 'water_sort',
+    titleFa: 'مرتب‌سازی آب',
+    titleEn: 'Water Sort',
+    hintFa: 'روی یک لوله بزن تا بلند شود، بعد روی لوله‌ی مقصد بزن تا مایع ریخته شود؛ فقط روی همان رنگ یا لوله‌ی خالی. هر لوله را یک‌رنگ کن. مراحل بی‌پایان‌اند و پیشرفتت ذخیره می‌شود.',
+    hintEn: 'Tap a tube to lift it, then tap another to pour: only onto the same colour or an empty tube. Fill each tube with one colour. Levels are endless and your progress is saved.',
+    control: SoloControl.tap,
+    accent: const Color(0xFFB46BFF),
+    accent2: const Color(0xFFFFD6F5),
+    board: (BuildContext c, SoloRun r) => WaterSortBoard(run: r),
   ),
 ];
 
