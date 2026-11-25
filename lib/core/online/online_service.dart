@@ -19,7 +19,7 @@ Future<void> initOnline() async {
       OnlineService._games = SupabaseClient(
         OnlineConfig.gamesUrl,
         OnlineConfig.gamesAnonKey,
-        accessToken: () async => Supabase.instance.client.auth.currentSession?.accessToken,
+        accessToken: _freshAccessToken,
       );
     }
     // Dedicated client for the social media project (when hosted on a distinct project URL; if pointed at the same
@@ -28,11 +28,33 @@ Future<void> initOnline() async {
       OnlineService._social = SupabaseClient(
         OnlineConfig.socialUrl,
         OnlineConfig.socialAnonKey,
-        accessToken: () async => Supabase.instance.client.auth.currentSession?.accessToken,
+        accessToken: _freshAccessToken,
       );
     }
   } catch (e) {
     debugPrint('ANIX online init failed: $e');
+  }
+}
+
+/// Access token for the games / social clients (Third-Party Auth on those projects).
+///
+/// The auth client refreshes its session on a timer, but after the app resumes from the background the cached token
+/// can already be expired; sending it makes PostgREST answer 401 (seen live: every 401 on the games project carried an
+/// expired auth-project JWT). So refresh first when the token is expired or about to expire. gotrue de-duplicates
+/// concurrent refreshes, and a failed refresh falls back to the cached token (the call then fails as before).
+Future<String?> _freshAccessToken() async {
+  final GoTrueClient auth = Supabase.instance.client.auth;
+  final Session? s = auth.currentSession;
+  if (s == null) return null;
+  final int? exp = s.expiresAt;
+  final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  if (exp != null && exp - now > 30) return s.accessToken;
+  try {
+    final AuthResponse r = await auth.refreshSession();
+    return r.session?.accessToken ?? auth.currentSession?.accessToken ?? s.accessToken;
+  } catch (e) {
+    debugPrint('ANIX token refresh failed: $e');
+    return auth.currentSession?.accessToken ?? s.accessToken;
   }
 }
 

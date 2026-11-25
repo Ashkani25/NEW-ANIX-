@@ -27,13 +27,18 @@ const PROVIDERS: Record<string, Provider> = {
     base: "https://inference.dahl.global/v1",
     models: ["deepseek-ai/DeepSeek-V4-Flash-0731", "zai-org/GLM-5.3-Flash", "MiniMaxAI/MiniMax-M2.7"],
   },
+  kenari: {
+    name: "kenari",
+    base: "https://kenari.id/v1",
+    models: ["glm-4-7-flash:free", "hy4-flash:free", "beam-1-0:free"],
+  },
   tokenrouter: {
     name: "tokenrouter",
     base: "https://api.tokenrouter.com/v1",
     models: ["google/gemini-3.8-flash", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.6-luna"],
   },
 };
-const ORDER = ["openrouter", "dahl", "tokenrouter"];
+const ORDER = ["openrouter", "dahl", "kenari", "tokenrouter"];
 const DAILY_LIMIT = 300;
 
 const GAME_RULES: Record<string, string> = {
@@ -167,11 +172,12 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${k.key}`, ...(p.headers ?? {}) },
           body: JSON.stringify({ model, messages: [{ role: "system", content: sys }, ...msgs], max_tokens: 700, temperature: 0.7, stream }),
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(k.provider === "dahl" || k.provider === "openrouter" ? 10000 : 14000),
         });
       } catch (e) {
         errors.push(`${id}/${model}: ${String(e).slice(0, 60)}`);
-        continue;
+        cool.set(id, Date.now() + 60e3); // slow/unreachable provider → skip it for a minute
+        break;
       }
       if (!r.ok) {
         const t = (await r.text()).slice(0, 300);
@@ -182,6 +188,7 @@ Deno.serve(async (req) => {
           break; // this key is unusable → next key
         }
         if (r.status === 429) { cool.set(id, Date.now() + 60e3); break; }
+        if (r.status >= 500) { cool.set(id, Date.now() + 30e3); break; } // provider down → next provider now
         continue; // model error → next model on the same key
       }
       await admin.rpc("nx_oracle_log", { p_user: u.user.id, p_provider: k.provider, p_model: model });
