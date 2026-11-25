@@ -156,6 +156,14 @@ class BazaarStore extends ChangeNotifier {
       return r;
     }
     if (r['retry'] == true) return null; // store or server hiccup: leave it unconsumed
+    if (r['error'] == 'refunded') {
+      // Bazaar refunded it (the server already took the pack back): consume so it is not retried on every launch
+      try {
+        await FlutterPoolakey.consume(p.purchaseToken);
+      } catch (e) {
+        debugPrint('poolakey consume refunded: $e');
+      }
+    }
     return r;
   }
 
@@ -221,6 +229,7 @@ String iapErrorText(String? e, bool fa) => switch (e) {
       'pending' => fa
           ? 'پرداخت انجام شد ولی تأیید نشد؛ دفعه‌ی بعد که وارد شوی خودکار اضافه می‌شود'
           : 'Paid but not confirmed yet; it will be added automatically next time',
+      'refunded' => fa ? 'این خرید بازگشت داده شده است' : 'This purchase was refunded',
       'payload_mismatch' || 'token_used' => fa ? 'این خرید مال حساب دیگری است' : 'This purchase belongs to another account',
       _ => fa ? 'خرید انجام نشد' : 'Purchase failed',
     };

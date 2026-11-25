@@ -5,11 +5,13 @@
 // 2. Ask Bazaar: GET https://pardakht.cafebazaar.ir/devapi/v2/api/validate/<pkg>/inapp/<sku>/purchases/<token>/
 //    with header CAFEBAZAAR-PISHKHAN-API-SECRET (Pishkhan -> app -> "API پیشخان" -> new token).
 //    purchaseState must be 0 and developerPayload (set by the app to the uid) must match the caller.
-// 3. nx_iap_credit (service_role) records the token once and adds the coins / gems.
+// 3. nx_iap_credit (service_role) records the token once and adds the coins / gems through nx_wallet_apply (ledger
+//    row 'iap:bazaar', idem 'iap:bazaar:<token>'). purchaseState 1 (refunded) -> nx_iap_mark_refunded instead.
 // The app consumes the purchase only after ok = true, so a failure here is retried on the next launch.
 //
 // Secrets: BAZAAR_API_SECRET (required), BAZAAR_PACKAGE (default com.nexora.nexora).
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { bazaarValidate, purchaseState, PURCHASED, REFUNDED } from "../_shared/bazaar.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -20,17 +22,6 @@ const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 const SKU = /^[a-z0-9_.]{3,64}$/;
 const TOKEN = /^[A-Za-z0-9_\-.:]{6,512}$/;
-
-async function bazaarValidate(pkg: string, sku: string, token: string, secret: string) {
-  const url = `https://pardakht.cafebazaar.ir/devapi/v2/api/validate/${encodeURIComponent(pkg)}/inapp/` +
-    `${encodeURIComponent(sku)}/purchases/${encodeURIComponent(token)}/`;
-  const headers = { "CAFEBAZAAR-PISHKHAN-API-SECRET": secret, "Accept": "application/json" };
-  // Bazaar's docs say GET; its support has told developers POST. Try GET, fall back to POST on 405.
-  let res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(10000) });
-  if (res.status === 405) res = await fetch(url, { method: "POST", headers, signal: AbortSignal.timeout(10000) });
-  const body = await res.json().catch(() => ({}));
-  return { status: res.status, body: body as Record<string, unknown> };
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -67,7 +58,14 @@ Deno.serve(async (req) => {
       console.error("bazaar validate", v.status, JSON.stringify(v.body).slice(0, 300));
       return json({ ok: false, error: "store_unavailable", retry: true }, 502);
     }
-    if (Number(v.body.purchaseState) !== 0) return json({ ok: false, error: "not_purchased" }, 400);
+    const state = purchaseState(v);
+    if (state === REFUNDED) {
+      // refunded by Bazaar: if this token was credited before, take the pack back (idempotent, ledgered)
+      const { error: rerr } = await admin.rpc("nx_iap_mark_refunded", { p_store: "bazaar", p_token: token, p_raw: v.body });
+      if (rerr) console.error("nx_iap_mark_refunded", rerr.message);
+      return json({ ok: false, error: "refunded" }, 400);
+    }
+    if (state !== PURCHASED) return json({ ok: false, error: "not_purchased" }, 400);
     const payload = String(v.body.developerPayload ?? "");
     if (payload && payload !== user.id) return json({ ok: false, error: "payload_mismatch" }, 403);
 
