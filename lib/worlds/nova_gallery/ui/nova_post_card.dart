@@ -8,6 +8,7 @@ import '../../../core/settings/app_settings.dart';
 import '../../../core/theme/nx_theme.dart';
 import '../../../core/widgets/nx_widgets.dart';
 import '../../../core/widgets/user_profile_preview.dart';
+import '../../../core/safety/safety_actions.dart';
 import '../models/nova_models.dart';
 import '../state/nova_controller.dart';
 import 'nova_composer.dart';
@@ -15,6 +16,8 @@ import 'nova_visuals.dart';
 
 import '../../../core/ui2/anix_kit.dart';
 import '../../../core/ui2/luxe.dart';
+
+final RegExp _uuid = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 
 /// One post in the feed.
 class NovaPostCard extends ConsumerWidget {
@@ -93,6 +96,7 @@ class NovaPostCard extends ConsumerWidget {
                 if (mine) PopupMenuItem<String>(value: 'delete', child: Text(c.tx('حذف', 'Delete'))),
                 PopupMenuItem<String>(value: 'share', child: Text(c.tx('ارسال به Orbit', 'Share to Orbit'))),
                 PopupMenuItem<String>(value: 'copy', child: Text(c.tx('کپی متن', 'Copy text'))),
+                if (!mine) PopupMenuItem<String>(value: 'report', child: Text(c.tx('گزارش پست', 'Report post'))),
               ],
             ),
           ]),
@@ -176,6 +180,14 @@ class NovaPostCard extends ConsumerWidget {
         break;
       case 'share':
         if (context.mounted) await shareNovaPostToOrbit(context, ref, post);
+        break;
+      case 'report':
+        await reportContent(context,
+            targetUser: _uuid.hasMatch(post.authorId) ? post.authorId : null,
+            kind: 'post',
+            targetId: post.id,
+            label: post.authorName,
+            excerpt: post.textFor(context.isFa));
         break;
       case 'copy':
         await Clipboard.setData(ClipboardData(text: post.textFor(context.isFa)));

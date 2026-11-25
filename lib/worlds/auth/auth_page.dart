@@ -115,7 +115,7 @@ class _AuthPageState extends ConsumerState<AuthPage> {
       case 'invalid_login':
         return context.tx('نام کاربری/ایمیل یا رمز نادرست است.', 'Wrong username/email or password.');
       case 'username_taken':
-        return context.tx('این نام کاربری گرفته شده است.', 'That username is taken.');
+        return context.tx('این نام کاربری گرفته شده یا مجاز نیست.', 'That username is taken or not allowed.');
       case 'bad_username':
         return context.tx('نام کاربری: ۳ تا ۲۰ حرف انگلیسی کوچک، عدد، _ یا .', 'Username: 3–20 of a-z, 0-9, _ or .');
       case 'email_taken':

@@ -188,6 +188,14 @@ class SettingsPage extends ConsumerWidget {
               ),
               const SizedBox(height: 10),
               const AccountStatusCard(),
+              if (ref.watch(onlineProvider).isOnline && !ref.watch(onlineProvider).isGuest)
+                ListTile(
+                  key: const ValueKey<String>('settings-blocked'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.block_rounded, color: Color(0xFFF6E7BD)),
+                  title: Text(context.tx('کاربران مسدودشده', 'Blocked users')),
+                  onTap: () => context.push('/settings/blocked'),
+                ),
               const SizedBox(height: 10),
               const DeleteAccountButton(),
             ]),

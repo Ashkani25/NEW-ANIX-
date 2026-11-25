@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../worlds/orbit_network/ui/orbit_chat_page.dart';
 import '../online/online_service.dart';
 import '../online/social_api.dart';
+import '../safety/safety_actions.dart';
 import '../settings/app_settings.dart';
 import '../ui2/luxe.dart';
 
@@ -64,6 +65,7 @@ class _UserProfilePreviewSheetState extends State<_UserProfilePreviewSheet> {
   bool _following = false;
   bool _followsMe = false;
   bool _pending = false;
+  bool _blockedByMe = false;
 
   final TextEditingController _msgCtrl = TextEditingController();
 
@@ -75,6 +77,11 @@ class _UserProfilePreviewSheetState extends State<_UserProfilePreviewSheet> {
     super.initState();
     _avatarUrl = widget.avatarUrl;
     _load();
+    if (_me != null && _me != widget.userId) {
+      isBlockedByMe(widget.userId).then((bool b) {
+        if (mounted) setState(() => _blockedByMe = b);
+      });
+    }
   }
 
   @override
@@ -203,9 +210,10 @@ class _UserProfilePreviewSheetState extends State<_UserProfilePreviewSheet> {
       if (mounted) {
         luxeToast(context, context.tx('پیام ارسال شد ✓', 'Message sent ✓'));
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
-        luxeToast(context, context.tx('ارسال پیام ناموفق بود', 'Could not send message'));
+        luxeToast(context, safetyErrorText(e, context.isFa) ?? context.tx('ارسال پیام ناموفق بود', 'Could not send message'),
+            error: true);
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -225,10 +233,11 @@ class _UserProfilePreviewSheetState extends State<_UserProfilePreviewSheet> {
       await nav.push<void>(MaterialPageRoute<void>(
         builder: (BuildContext ctx) => OrbitChatPage(chatId: '$chatId'),
       ));
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         setState(() => _openingChat = false);
-        luxeToast(context, context.tx('باز کردن گفت‌وگو ممکن نشد', 'Could not open chat'));
+        luxeToast(context, safetyErrorText(e, context.isFa) ?? context.tx('باز کردن گفت‌وگو ممکن نشد', 'Could not open chat'),
+            error: true);
       }
     }
   }
@@ -457,6 +466,28 @@ class _UserProfilePreviewSheetState extends State<_UserProfilePreviewSheet> {
                 ),
               ],
             ),
+            const SizedBox(height: 6),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: <Widget>[
+              TextButton.icon(
+                key: const ValueKey<String>('profile-block'),
+                onPressed: () async {
+                  final bool? now = await toggleBlockUser(context,
+                      userId: widget.userId, username: _username, currentlyBlocked: _blockedByMe);
+                  if (now != null && mounted) setState(() => _blockedByMe = now);
+                },
+                icon: Icon(_blockedByMe ? Icons.lock_open_rounded : Icons.block_rounded, size: 18, color: mute),
+                label: Text(_blockedByMe ? context.tx('رفع مسدودی', 'Unblock') : context.tx('مسدود کردن', 'Block'),
+                    style: TextStyle(color: mute)),
+              ),
+              TextButton.icon(
+                key: const ValueKey<String>('profile-report'),
+                onPressed: () => reportContent(context,
+                    targetUser: widget.userId, kind: 'profile', targetId: widget.userId, label: _username,
+                    excerpt: [_displayName, _bio].where((String x) => x.isNotEmpty).join(' — ')),
+                icon: Icon(Icons.flag_rounded, size: 18, color: mute),
+                label: Text(context.tx('گزارش', 'Report'), style: TextStyle(color: mute)),
+              ),
+            ]),
           ],
         ],
       ),

@@ -19,6 +19,7 @@ NxAccess nxAccess({required String authMode, required bool hasUser, required boo
 bool isOnlineOnlyPath(String path) =>
     path == '/social' ||
     path == '/leaderboard' ||
+    path == '/settings/blocked' ||
     path.startsWith('/online/') ||
     path.startsWith('/call/') ||
     path == '/tournaments' ||

@@ -34,6 +34,7 @@ import '../worlds/orbit_network/ui/orbit_call_page.dart';
 import '../worlds/personal_orbit/personal_orbit_page.dart';
 import '../worlds/settings/account_page.dart';
 import '../worlds/settings/settings_page.dart';
+import '../worlds/settings/blocked_users_page.dart';
 import '../worlds/rooms/rooms_page.dart';
 import '../worlds/rooms/talk_room_page.dart';
 import '../worlds/social_hub/social_hub_page.dart';
@@ -138,6 +139,7 @@ GoRouter buildRouter(WidgetRef ref) {
       GoRoute(path: '/social', pageBuilder: (context, state) => _warp(state, const SocialHubPage())),
       GoRoute(path: '/rewards', pageBuilder: (context, state) => _warp(state, const RewardsPage())),
       GoRoute(path: '/settings', builder: (context, state) => const SettingsPage()),
+      GoRoute(path: '/settings/blocked', builder: (context, state) => const BlockedUsersPage()),
       GoRoute(path: '/admin/oracle', builder: (context, state) => const OracleConfigPage()),
       GoRoute(path: '/admin', builder: (context, state) => const AdminPage()),
       GoRoute(path: '/force-password', builder: (context, state) => const ForcePasswordPage()),

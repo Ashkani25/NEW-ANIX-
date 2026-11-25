@@ -11,6 +11,7 @@ import '../state/social_controller.dart';
 import 'social_widgets.dart';
 
 import '../../../core/ui2/anix_kit.dart';
+import '../../../core/safety/safety_actions.dart';
 // ============================ actions ============================
 
 Future<void> composeCommunityPost(BuildContext context, WidgetRef ref, Community c) async {
@@ -678,6 +679,15 @@ class CommunityAboutTab extends ConsumerWidget {
       ),
       SocialSectionTitle(context.tx('مجوزهای نقش‌ها', 'Role permissions')),
       const _PermissionMatrix(),
+      if (myRole != CommunityRole.owner) ...<Widget>[
+        const SizedBox(height: NxSpace.md),
+        TextButton.icon(
+          key: const ValueKey<String>('community-report'),
+          onPressed: () => reportContent(context, kind: 'community', targetId: c.id, label: c.name, excerpt: c.description),
+          icon: const Icon(Icons.flag_rounded),
+          label: Text(context.tx('گزارش این جامعه', 'Report this community')),
+        ),
+      ],
       if (CommunityPermissions.canDeleteCommunity(myRole)) ...<Widget>[
         const SizedBox(height: NxSpace.lg),
         OutlinedButton.icon(
