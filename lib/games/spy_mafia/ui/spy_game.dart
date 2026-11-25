@@ -9,8 +9,8 @@ import '../../arcade_kit/arcade_fx.dart';
 import '../../arcade_kit/arcade_loop.dart';
 import '../../arcade_kit/arcade_result.dart';
 import '../../arcade_kit/arcade_skin.dart';
-import '../../arcade_kit/arcade_turns.dart';
 import '../../core/game_contract.dart';
+import '../../core/server_game.dart';
 import '../core/spy_core.dart';
 
 /// Sprite keys: card_back (portrait), spy, agent, loc_0 .. loc_11 (location art), table (background).
@@ -39,10 +39,9 @@ class _SpyGameViewState extends ArcadeLoopState<SpyGameView> {
   late final SpyGame g;
   late final ArcadeSkin skin = spySkin();
   late final ArcadeFx fx;
-  ArcadeTurnNet? tn;
+  ServerGameSync? _sync;
   final math.Random _rng = math.Random(5);
   double _botT = 0;
-  double _phaseT = 0;
   SpyPhase _lastPhase = SpyPhase.clues;
   bool _done = false;
   bool _peek = true;
@@ -54,32 +53,31 @@ class _SpyGameViewState extends ArcadeLoopState<SpyGameView> {
   double get _skill => botSkillFor(l.daily ? BotDifficulty.hard : l.difficulty);
 
   String _word(int ref) {
+    if (ref < 0 || spyWordLoc(ref) >= kSpyLocations.length) return '?';
     final SpyLocation loc = kSpyLocations[spyWordLoc(ref)];
     final int w = ref % 6;
     return l.isFa ? loc.wordsFa[w] : loc.wordsEn[w];
   }
 
-  String _locName(int i) => l.isFa ? kSpyLocations[i].fa : kSpyLocations[i].en;
+  String _locName(int i) => i < 0 || i >= kSpyLocations.length ? '?' : (l.isFa ? kSpyLocations[i].fa : kSpyLocations[i].en);
   String _name(int s) => l.netName(s) ?? (s == me ? l.playerName : '${l.tx('ربات', 'Bot')} ${s + 1}');
 
   @override
   void initState() {
     super.initState();
     fx = ArcadeFx(enabled: l.fancyEffects && !l.reducedMotion, skin: skin);
-    g = SpyGame(players: seats, seed: l.net?.seed ?? l.seed ?? 21);
-    unawaited(skin.load().then((_) => mounted ? setState(() {}) : null));
     final NetLink? n = l.net;
+    // Online the server deals (location, spies, clue options) and decides; this phone only mirrors its own view.
+    g = n != null ? (SpyGame.mirror(players: n.seatCount)..mySeatHint = n.mySeat) : SpyGame(players: seats, seed: l.seed ?? 21);
+    unawaited(skin.load().then((_) => mounted ? setState(() {}) : null));
     if (n != null) {
-      tn = ArcadeTurnNet(n, onMove: _onNet, onReplayDone: () => setState(() => tn?.turn = _turnSeat))..start();
-      for (final int s in n.forfeitedSeats) {
-        g.leave(s);
-      }
+      _sync = ServerGameSync(n, onView: _onView)..start();
     }
   }
 
   @override
   void dispose() {
-    tn?.dispose();
+    _sync?.dispose();
     super.dispose();
   }
 
@@ -89,48 +87,37 @@ class _SpyGameViewState extends ArcadeLoopState<SpyGameView> {
         _ => null,
       };
 
-  Future<void> _onNet(NetMove m) async {
-    if (!m.replay && m.seat == me) return;
-    if (m.isForfeit) {
-      g.leave((m.data['seat'] as num?)?.toInt() ?? m.seat);
-    } else if (m.isTimeout) {
-      if (m.data['a'] == 'vote') {
-        if (g.phase == SpyPhase.vote) g.vote(m.seat, -1);
-      } else {
-        if (g.phase == SpyPhase.clues) g.giveClue(g.turn, 0);
-        if (g.phase == SpyPhase.guess) g.guess(-1);
-      }
-    } else {
-      final String a = '${m.data['a']}';
-      final int v = (m.data['v'] as num?)?.toInt() ?? 0;
-      if (a == 'clue') g.giveClue(m.seat, v);
-      if (a == 'vote') g.vote(m.seat, v);
-      if (a == 'guess') g.guess(v);
-    }
-    tn?.turn = _turnSeat;
-    if (mounted) setState(() {});
+  bool _ready = false;
+
+  void _onView(Map<String, dynamic> v) {
+    if (!mounted) return;
+    g.applyServerView(v);
+    _ready = true;
+    l.net?.turnSeat = _turnSeat;
+    setState(() {});
   }
 
   void _act(String a, int v) {
+    final ServerGameSync? sync = _sync;
+    if (sync != null) {
+      // online: the server checks the move (turn, phase, legality) and publishes the new state
+      HapticFeedback.selectionClick();
+      unawaited(sync.act(<String, dynamic>{'a': a, 'v': v}));
+      return;
+    }
     bool ok = false;
     if (a == 'clue') ok = g.giveClue(me, v);
     if (a == 'vote') ok = g.vote(me, v);
     if (a == 'guess') ok = g.guess(v);
     if (!ok) return;
     HapticFeedback.selectionClick();
-    if (tn != null) {
-      unawaited(tn!.send(<String, dynamic>{'a': a, 'v': v}));
-      tn!.turn = _turnSeat;
-    }
     setState(() {});
   }
 
   @override
   void tick(double dt) {
-    _phaseT += dt;
     if (g.phase != _lastPhase) {
       _lastPhase = g.phase;
-      _phaseT = 0;
       if (g.phase == SpyPhase.vote) HapticFeedback.mediumImpact();
       if (g.phase == SpyPhase.over) _finish();
       setState(() {});
@@ -154,18 +141,6 @@ class _SpyGameViewState extends ArcadeLoopState<SpyGameView> {
           changed = g.guess(g.botGuess(_rng, _skill));
         }
         if (changed) setState(() {});
-      }
-    }
-    // online: the authority files an abstain for players who never voted (30 s)
-    final ArcadeTurnNet? t = tn;
-    if (t != null && t.isAuthority && g.phase == SpyPhase.vote && _phaseT > 30) {
-      _phaseT = 0;
-      for (final int s in g.activeSeats) {
-        if (!g.votes.containsKey(s) && s != me) {
-          // Filed as a 'timeout' row: the server only accepts ordinary moves for the sender's own seat.
-          unawaited(t.net.send(<String, dynamic>{'a': 'vote', 'v': -1}, kind: 'timeout', asSeat: s));
-          g.vote(s, -1);
-        }
       }
     }
     fx.update(dt);
@@ -197,6 +172,7 @@ class _SpyGameViewState extends ArcadeLoopState<SpyGameView> {
   // ------------------------------------------------------------------ UI
   @override
   Widget build(BuildContext context) {
+    if (l.online && !_ready) return const Center(child: CircularProgressIndicator());
     final EdgeInsets pad = MediaQuery.paddingOf(context);
     return Stack(fit: StackFit.expand, children: <Widget>[
       CustomPaint(painter: ArcadePainter((Canvas c, Size s) {
@@ -245,7 +221,7 @@ class _SpyGameViewState extends ArcadeLoopState<SpyGameView> {
                   !_peek
                       ? l.tx('کارت نقش (برای دیدن لمس کن)', 'Role card (tap to peek)')
                       : spy
-                          ? l.tx(g.spies.length > 1 ? 'تو جاسوسی (مافیا)' : 'تو جاسوسی!', g.spies.length > 1 ? 'You are a SPY (mafia)' : 'You are the SPY!')
+                          ? l.tx(g.spyCount > 1 ? 'تو جاسوسی (مافیا)' : 'تو جاسوسی!', g.spyCount > 1 ? 'You are a SPY (mafia)' : 'You are the SPY!')
                           : l.tx('تو مأموری', 'You are an AGENT'),
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 17)),
               const SizedBox(height: 2),

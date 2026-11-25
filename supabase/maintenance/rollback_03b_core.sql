@@ -1,0 +1,1 @@
+-- rollback 03b: revoke execute on function public._nx_trusted() from anon, authenticated;

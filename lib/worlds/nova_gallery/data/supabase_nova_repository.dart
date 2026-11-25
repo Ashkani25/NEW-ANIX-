@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -402,11 +403,14 @@ class SupabaseNovaRepository implements NovaRepository {
   }
 
   // ------------------------------------------------------------------ media
+  static final math.Random _rng = math.Random.secure();
   /// Uploads a photo to `nx-media/<uid>/<time>.<ext>` and returns its public URL.
   Future<String> uploadPhoto(Uint8List bytes, {required String ext}) async {
     final String e = ext.toLowerCase().replaceAll('.', '');
     final String mime = e == 'png' ? 'image/png' : (e == 'webp' ? 'image/webp' : (e == 'gif' ? 'image/gif' : 'image/jpeg'));
-    final String path = '$me/${DateTime.now().millisecondsSinceEpoch}.${e.isEmpty ? 'jpg' : e}';
+    // Unguessable name: the bucket serves public URLs, so a private account's photo must not be found by guessing.
+    final String rnd = List<String>.generate(4, (_) => _rng.nextInt(1 << 32).toRadixString(36)).join();
+    final String path = '$me/${DateTime.now().millisecondsSinceEpoch}_$rnd.${e.isEmpty ? 'jpg' : e}';
     await c.storage.from(bucket).uploadBinary(path, bytes, fileOptions: FileOptions(contentType: mime, upsert: false));
     return c.storage.from(bucket).getPublicUrl(path);
   }

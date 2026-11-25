@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../../core/theme/nx_theme.dart';
 import '../../../core/widgets/nx_widgets.dart';
 import '../../core/game_contract.dart';
+import '../../core/server_game.dart';
 import '../core/uno_bot.dart';
 import '../core/uno_engine.dart';
 import '../core/uno_models.dart';
@@ -87,115 +88,108 @@ class _UnoGameViewState extends State<UnoGameView>
   bool get _motion => !_l.reducedMotion;
 
   // ------------------------------------------------------------- online
-  NetInbox? _inbox;
-  final Set<int> _out = <int>{};
+  // Online NX Cards is server-authoritative: the server shuffles and deals, keeps every hand and the draw pile,
+  // checks each play / draw / pass / NX call / catch (nx_hg_act), applies the turn timeout and decides the winner.
+  // This phone only holds its own hand; opponents' cards are face-down placeholders until the end.
+  ServerGameSync? _sync;
+  int _serverEv = 0;
+  static final List<UnoCard> _deck = buildUnoDeck();
   bool _isRemote(int seat) => _l.isRemoteSeat(seat);
-  String _hash() {
-    final StringBuffer b = StringBuffer(
-        '${_game.current}|${_game.activeColor.index}|${_game.drawnCardId}|');
-    for (int p = 0; p < _game.playerCount; p++) {
-      b.write('${_game.hands[p].map((UnoCard c) => c.id).join(',')};');
-    }
-    return hashOf(b.toString());
+
+  UnoCard _card(int id) => id >= 0 && id < _deck.length ? _deck[id] : UnoCard(id: id, kind: UnoKind.number, color: UnoColor.turquoise, number: 0);
+  UnoCard _back(int id) => UnoCard(id: id, kind: UnoKind.number, color: UnoColor.turquoise, number: 0);
+
+  void _serverAct(Map<String, dynamic> a) {
+    final ServerGameSync? sync = _sync;
+    if (sync == null) return;
+    unawaited(sync.act(a).then((Map<String, dynamic> r) {
+      if (!mounted || r['ok'] == true || r['reason'] == 'rate') return;
+      _showToast(_tx('حرکت پذیرفته نشد', 'Move not accepted'), NxColors.danger);
+    }));
   }
 
-  void _send(Map<String, dynamic> d) {
-    if (_l.online) _l.net!.send(d);
-  }
-
-  /// Apply one player's logged action to the engine (same calls the UI makes).
-  bool _applyAction(int seat, Map<String, dynamic> d) {
-    switch ('${d['a']}') {
-      case 'play':
-        final int? col = (d['col'] as num?)?.toInt();
-        return _game.play(seat, (d['c'] as num).toInt(),
-            chosenColor: col == null || col < 0 || col >= UnoColor.values.length
-                ? null
-                : UnoColor.values[col]);
-      case 'draw':
-        return _game.draw(seat) != null || true;
-      case 'pass':
-        return _game.pass(seat);
-      case 'nx':
-        return _game.callNx(seat);
-      case 'catch':
-        return _game.catchNx(seat);
-    }
-    return false;
-  }
-
-  /// A player who left: when their turn comes, every phone draws and passes for them (deterministic).
-  void _autoOut() {
-    int guard = 0;
-    while (!_game.isOver && _out.contains(_game.current) && guard < 12) {
-      final int cur = _game.current;
-      _game.draw(cur);
-      if (!_game.isOver && _game.current == cur) _game.pass(cur);
-      guard++;
-    }
-  }
-
-  int? _lastStanding() {
-    final List<int> alive = <int>[
-      for (int i = 0; i < _game.playerCount; i++)
-        if (!_out.contains(i)) i
-    ];
-    return alive.length == 1 ? alive.first : null;
-  }
-
-  Future<void> _onNet(NetMove m) async {
+  /// Copies this player's server view into the local table and animates the new public events.
+  void _onView(Map<String, dynamic> v) {
     if (!mounted) return;
-    if (m.kind == 'replayDone') {
+    final int n = _game.playerCount;
+    final List<int> counts = vInts(v['counts']);
+    final List<int> mine = vInts(v['hand']);
+    final dynamic all = v['hands'];
+    _game.hands = List<List<UnoCard>>.generate(n, (int p) {
+      if (all is List && p < all.length) return vInts(all[p]).map(_card).toList();
+      if (p == _viewer) return mine.map(_card).toList();
+      final int c = p < counts.length ? counts[p] : 0;
+      return List<UnoCard>.generate(c, (int k) => _back(-1 - p * 200 - k));
+    });
+    _game.drawPile = List<UnoCard>.generate(vInt(v['draw_n']) ?? 0, (int k) => _back(-100000 - k));
+    _game.discard = vInts(v['disc']).map(_card).toList();
+    final int col = vInt(v['color']) ?? 0;
+    _game.activeColor = UnoColor.values[col.clamp(0, UnoColor.values.length - 1)];
+    _game.current = vInt(v['cur']) ?? 0;
+    _game.direction = vInt(v['dir']) ?? 1;
+    _game.drawnCardId = vInt(v['drawn']) ?? (v['drawing'] == true ? -999999 : null);
+    _game.vulnerable = vInt(v['vul']);
+    final dynamic called = v['called'];
+    _game.nxCalled = List<bool>.generate(n, (int p) => called is List && p < called.length && called[p] == true);
+    _game.winner = vInt(v['winner']);
+    _out
+      ..clear()
+      ..addAll(vInts(v['out']));
+    final bool first = _serverEv == 0;
+    for (final Map<String, dynamic> e in vMaps(v['ev'])) {
+      final int i = vInt(e['i']) ?? 0;
+      if (i <= _serverEv) continue;
+      _serverEv = i;
+      final UnoEvent? ue = _event(e);
+      if (ue != null) _game.events.add(ue);
+    }
+    if (first) {
+      // a fresh match animates the deal; a rejoin starts from the current table
+      final bool fresh = vMaps(v['ev']).every((Map<String, dynamic> e) => e['t'] == 'deal');
       _cursor = _game.events.length;
-      if (_lastStanding() != null) {
-        _finishOnline(_lastStanding()!);
-        return;
-      }
-      setState(() {});
-      if (!_dealt) {
+      if (fresh && !_dealt) {
+        setState(() {});
         _deal();
-      } else {
-        _afterChange();
-      }
-      return;
-    }
-    if (m.isForfeit) {
-      _out.add((m.data['seat'] as num?)?.toInt() ?? m.seat);
-      if (_lastStanding() != null) {
-        if (!m.replay) _finishOnline(_lastStanding()!);
         return;
       }
-      _autoOut();
-      if (!m.replay) _afterChange();
-      return;
-    }
-    if (m.kind != 'move') return;
-    if (m.replay) {
       _dealt = true;
-      _applyAction(m.seat, m.data);
-      _autoOut();
-      return;
     }
-    _l.net?.verify(m.seq, m.data['h'] as String?, _hash());
-    if (_applyAction(m.seat, m.data)) {
-      if ('${m.data['a']}' == 'play' && m.seat != _l.mySeat) {
-        _pickingWild = null;
-      }
-      _autoOut();
-      _afterChange();
-    }
+    _pickingWild = null;
+    _afterChange();
   }
 
-  void _finishOnline(int winner) {
-    if (_finished || !mounted) return;
-    _finished = true;
-    _l.onFinish(GameResult(
-      outcome: winner == _l.mySeat ? GameOutcome.win : GameOutcome.loss,
-      winnerSeats: <int>[winner],
-      summaryFa: '${_name(winner)} آخرین بازیکن باقی‌مانده بود.',
-      summaryEn: '${_name(winner)} was the last player standing.',
-    ));
+  UnoEvent? _event(Map<String, dynamic> e) {
+    final int p = vInt(e['p']) ?? -1;
+    final int c = vInt(e['n']) ?? 0;
+    switch ('${e['t']}') {
+      case 'deal':
+        return const UnoEvent(UnoEventType.deal);
+      case 'play':
+        return UnoEvent(UnoEventType.play, player: p, card: _card(vInt(e['c']) ?? 0));
+      case 'color':
+        final int col = (vInt(e['col']) ?? 0).clamp(0, UnoColor.values.length - 1);
+        return UnoEvent(UnoEventType.colorChosen, player: p, color: UnoColor.values[col]);
+      case 'draw':
+        return UnoEvent(UnoEventType.draw, player: p, count: c);
+      case 'skip':
+        return UnoEvent(UnoEventType.skip, player: p);
+      case 'reverse':
+        return UnoEvent(UnoEventType.reverse, player: p);
+      case 'nx':
+        return UnoEvent(UnoEventType.nxCall, player: p);
+      case 'caught':
+        return UnoEvent(UnoEventType.nxCaught, player: p, count: c);
+      case 'reshuffle':
+        return UnoEvent(UnoEventType.reshuffle, count: c);
+      case 'win':
+        return UnoEvent(UnoEventType.win, player: p, count: c);
+      case 'pass':
+        return UnoEvent(UnoEventType.pass, player: p);
+    }
+    return null;
   }
+
+  final Set<int> _out = <int>{};
 
   static const List<String> _botFa = <String>[
     'ربات نوا',
@@ -224,8 +218,13 @@ class _UnoGameViewState extends State<UnoGameView>
   void initState() {
     super.initState();
     final int seed = _l.seed ?? DateTime.now().millisecondsSinceEpoch;
-    final int players = math.max(2, math.min(4, _l.playerCount));
+    final int players = _l.net != null ? _l.net!.seatCount.clamp(2, 6).toInt() : math.max(2, math.min(4, _l.playerCount));
     _game = UnoGame(playerCount: players, seed: seed);
+    if (_l.net != null) {
+      // nothing is known until the server's first view arrives
+      _game.hands = List<List<UnoCard>>.generate(players, (_) => <UnoCard>[]);
+      _game.drawPile = <UnoCard>[];
+    }
     _rng = math.Random(seed ^ 0x5eed);
     switch (_l.difficulty) {
       case BotDifficulty.easy:
@@ -252,14 +251,7 @@ class _UnoGameViewState extends State<UnoGameView>
     if (net != null) {
       _viewer = net.mySeat;
       _revealed = true;
-      final NetInbox inbox = NetInbox(_onNet);
-      _inbox = inbox;
-      net.listen(inbox.add,
-          onReplayDone: () => inbox.add(const NetMove(
-              seq: -1,
-              seat: -1,
-              kind: 'replayDone',
-              data: <String, dynamic>{})));
+      _sync = ServerGameSync(net, onView: _onView)..start();
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) => _deal());
     }
@@ -267,7 +259,7 @@ class _UnoGameViewState extends State<UnoGameView>
 
   @override
   void dispose() {
-    _inbox?.close();
+    _sync?.dispose();
     _botTimer?.cancel();
     _catchTimer?.cancel();
     _finishTimer?.cancel();
@@ -532,7 +524,6 @@ class _UnoGameViewState extends State<UnoGameView>
 
   void _afterChange() {
     if (!mounted) return;
-    if (_l.online) _autoOut();
     _consume();
     setState(() {});
     if (_game.isOver) {
@@ -686,10 +677,11 @@ class _UnoGameViewState extends State<UnoGameView>
       setState(() => _pickingWild = c);
       return;
     }
-    final String h = _hash();
-    if (_game.play(_viewer, c.id)) {
-      _send(<String, dynamic>{'a': 'play', 'c': c.id, 'h': h});
+    if (_l.online) {
+      _serverAct(<String, dynamic>{'a': 'play', 'c': c.id});
+      return;
     }
+    _game.play(_viewer, c.id);
     _afterChange();
   }
 
@@ -697,47 +689,49 @@ class _UnoGameViewState extends State<UnoGameView>
     final UnoCard? c = _pickingWild;
     setState(() => _pickingWild = null);
     if (c == null) return;
-    final String h = _hash();
-    if (_game.play(_viewer, c.id, chosenColor: color)) {
-      _send(<String, dynamic>{
-        'a': 'play',
-        'c': c.id,
-        'col': color.index,
-        'h': h
-      });
+    if (_l.online) {
+      _serverAct(<String, dynamic>{'a': 'play', 'c': c.id, 'col': color.index});
+      return;
     }
+    _game.play(_viewer, c.id, chosenColor: color);
     _afterChange();
   }
 
   void _tapDeck() {
     if (!_canAct || !_game.canDraw(_viewer)) return;
-    final String h = _hash();
+    if (_l.online) {
+      _serverAct(<String, dynamic>{'a': 'draw'});
+      return;
+    }
     _game.draw(_viewer);
-    _send(<String, dynamic>{'a': 'draw', 'h': h});
     _afterChange();
   }
 
   void _pass() {
     if (!_canAct) return;
-    final String h = _hash();
-    if (_game.pass(_viewer)) _send(<String, dynamic>{'a': 'pass', 'h': h});
+    if (_l.online) {
+      if (_game.drawnCardId != null) _serverAct(<String, dynamic>{'a': 'pass'});
+      return;
+    }
+    _game.pass(_viewer);
     _afterChange();
   }
 
   void _callNx() {
-    final String h = _hash();
-    if (_game.callNx(_viewer)) {
-      _send(<String, dynamic>{'a': 'nx', 'h': h});
-      _afterChange();
+    if (_l.online) {
+      if (_game.canCallNx(_viewer)) _serverAct(<String, dynamic>{'a': 'nx'});
+      return;
     }
+    if (_game.callNx(_viewer)) _afterChange();
   }
 
   void _catch() {
-    final String h = _hash();
-    if (_game.catchNx(_viewer)) {
-      _send(<String, dynamic>{'a': 'catch', 'h': h});
-      _afterChange();
+    if (_l.online) {
+      final int? v = _game.vulnerable;
+      if (v != null && v != _viewer) _serverAct(<String, dynamic>{'a': 'catch'});
+      return;
     }
+    if (_game.catchNx(_viewer)) _afterChange();
   }
 
   List<UnoCard> _sortedHand(int seat) {

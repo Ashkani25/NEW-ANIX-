@@ -83,4 +83,25 @@ void main() {
     expect(g.over, isTrue);
     expect(g.spiesWin, isFalse);
   });
+
+  test('online mirror: a spy view never carries the location or the other spies', () {
+    final SpyGame g = SpyGame.mirror(players: 7)..mySeatHint = 2;
+    g.applyServerView(<String, dynamic>{
+      'phase': 'clues', 'turn': 2, 'round': 0, 'starter': 2, 'spy': true, 'spy_count': 2, 'loc': -1,
+      'spies': <int>[2], 'opts': <int>[3, 14, 40], 'clues': <List<int>>[<int>[], <int>[], <int>[], <int>[], <int>[], <int>[], <int>[]],
+      'votes': <String, int>{}, 'out': <int>[],
+    });
+    expect(g.isSpy(2), isTrue);
+    expect(g.spyCount, 2);
+    expect(g.location, -1);
+    expect(g.options(2), <int>[3, 14, 40]);
+    g.applyServerView(<String, dynamic>{
+      'phase': 'over', 'turn': 2, 'round': 2, 'starter': 2, 'spy': true, 'spy_count': 2, 'loc': 5,
+      'spies': <int>[2, 6], 'clues': <dynamic>[], 'votes': <String, int>{'0': 2, '1': 6}, 'out': <int>[], 'spies_win': true,
+    });
+    expect(g.over, isTrue);
+    expect(g.spies, <int>{2, 6});
+    expect(g.location, 5);
+    expect(g.votes[1], 6);
+  });
 }

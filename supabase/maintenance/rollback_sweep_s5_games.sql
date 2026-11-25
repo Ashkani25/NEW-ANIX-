@@ -1,0 +1,1 @@
+-- rollback sweep S5 (games): drop policy if exists nx_match_channel_read on realtime.messages; drop policy if exists nx_match_channel_write on realtime.messages;  (and revert lib/core/online/match_link.dart private:true)

@@ -13,11 +13,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Ashimashi74/nexora-universe/releases/latest"><img alt="Download APK" src="https://img.shields.io/badge/Download-APK-ff3cac?style=for-the-badge&logo=android&logoColor=white"/></a>
-  <a href="https://github.com/Ashimashi74/nexora-universe/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Ashimashi74/nexora-universe?style=for-the-badge&label=latest&color=8b3dff"/></a>
+  <a href="https://github.com/Ashkani25/NEW-ANIX-/releases/latest"><img alt="Download APK" src="https://img.shields.io/badge/Download-APK-ff3cac?style=for-the-badge&logo=android&logoColor=white"/></a>
+  <a href="https://github.com/Ashkani25/NEW-ANIX-/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Ashkani25/NEW-ANIX-?style=for-the-badge&label=latest&color=8b3dff"/></a>
 </p>
 <p align="center">
-  <a href="https://github.com/Ashimashi74/nexora-universe/actions/workflows/android.yml"><img alt="Android build" src="https://github.com/Ashimashi74/nexora-universe/actions/workflows/android.yml/badge.svg?branch=main"/></a>
+  <a href="https://github.com/Ashkani25/NEW-ANIX-/actions/workflows/android.yml"><img alt="Android build" src="https://github.com/Ashkani25/NEW-ANIX-/actions/workflows/android.yml/badge.svg?branch=main"/></a>
   <img alt="Flutter" src="https://img.shields.io/badge/Flutter-3.50-02569B?logo=flutter&logoColor=white"/>
   <img alt="Supabase" src="https://img.shields.io/badge/Supabase-Postgres%20%7C%20Realtime%20%7C%20Edge-3ECF8E?logo=supabase&logoColor=white"/>
   <img alt="LiveKit" src="https://img.shields.io/badge/LiveKit-voice%20rooms%20%26%20calls-7B61FF"/>
@@ -39,14 +39,14 @@
 
 ## 📥 Download
 
-**➡️ [Latest release — ANIX-universal.apk](https://github.com/Ashimashi74/nexora-universe/releases/latest)**
+**➡️ [Latest release — ANIX-universal.apk](https://github.com/Ashkani25/NEW-ANIX-/releases/latest)**
 
 | File | For |
 |---|---|
 | `ANIX-universal.apk` | every Android phone (7.0+) |
 | `ANIX-arm64-v8a.apk` | smaller download for most modern phones |
 
-1. Open the [Releases page](https://github.com/Ashimashi74/nexora-universe/releases/latest) on your phone and download the APK.
+1. Open the [Releases page](https://github.com/Ashkani25/NEW-ANIX-/releases/latest) on your phone and download the APK.
 2. Allow *Install unknown apps* for your browser or file manager when Android asks.
 3. Install and open. Every new build is signed with the same key, so it **updates in place** — and the app tells you when a new version is out.
 
@@ -153,8 +153,8 @@ Game state, matchmaking, ratings and the economy are server-authoritative inside
 <summary><b>Build from source</b></summary>
 
 ```bash
-git clone https://github.com/Ashimashi74/nexora-universe.git
-cd nexora-universe
+git clone https://github.com/Ashkani25/NEW-ANIX-.git
+cd NEW-ANIX-
 flutter create --platforms=android --org com.nexora --project-name nexora .   # generates android/ (CI does the same)
 flutter pub get
 flutter analyze && flutter test
@@ -192,9 +192,9 @@ test/         unit + widget tests (games, rooms, auth rules, assets, ORACLE, tou
 
 ### 📥 دانلود
 
-**➡️ [آخرین نسخه — فایل ANIX-universal.apk](https://github.com/Ashimashi74/nexora-universe/releases/latest)**
+**➡️ [آخرین نسخه — فایل ANIX-universal.apk](https://github.com/Ashkani25/NEW-ANIX-/releases/latest)**
 
-۱. صفحه‌ی [Releases](https://github.com/Ashimashi74/nexora-universe/releases/latest) را روی گوشی باز کن و فایل APK را بگیر (`ANIX-arm64-v8a.apk` کم‌حجم‌تر است و روی بیشتر گوشی‌ها کار می‌کند).
+۱. صفحه‌ی [Releases](https://github.com/Ashkani25/NEW-ANIX-/releases/latest) را روی گوشی باز کن و فایل APK را بگیر (`ANIX-arm64-v8a.apk` کم‌حجم‌تر است و روی بیشتر گوشی‌ها کار می‌کند).
 ۲. وقتی اندروید پرسید، اجازه‌ی «نصب برنامه‌های ناشناس» را بده.
 ۳. نصب کن. نسخه‌های بعدی روی همین نصب می‌شوند و اپ خودش خبر می‌دهد.
 
