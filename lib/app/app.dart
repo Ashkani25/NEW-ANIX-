@@ -80,6 +80,7 @@ class _NexoraAppState extends ConsumerState<NexoraApp> {
 
   @override
   void dispose() {
+    AppGate.instance.stop();
     _invites.dispose();
     _announcements.dispose();
     _calls.dispose();
