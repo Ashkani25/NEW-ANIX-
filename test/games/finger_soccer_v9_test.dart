@@ -259,11 +259,13 @@ void main() {
   group('v9 teams: the 48 badge-sheet teams (v10 keeps the car and sport sets)', () {
     test('catalog, categories, art and shop ids', () {
       // v10 (owner art 2026-11-22) grew the catalogue; the v9 car/sport half is unchanged.
-      expect(kBmTeamDefs.where((BmTeamDef t) => t.cat == 'cars').length, 24);
+      // v14 added 16 car crests (discs/v11) on top of the 24 v9 car badges.
+      expect(kBmTeamDefs.where((BmTeamDef t) => t.cat == 'cars').length, 40);
+      expect(kBmTeamDefs.where((BmTeamDef t) => t.cat == 'cars' && t.art.startsWith('discs/v11/')).length, 16);
       expect(kBmTeamDefs.where((BmTeamDef t) => t.cat == 'sport').length, 12);
       expect(kBmTeams.map((BmTeam t) => t.id).toSet().length, kBmTeamDefs.length);
       // every car / sport badge is still the v9 art, byte for byte the same folder
-      for (final BmTeam t in kBmTeams.where((BmTeam t) => t.cat == 'cars' || t.cat == 'sport')) {
+      for (final BmTeam t in kBmTeams.where((BmTeam t) => (t.cat == 'cars' || t.cat == 'sport') && !t.id.startsWith('nxcar_'))) {
         expect(File(t.asset).existsSync(), isTrue, reason: t.asset);
         expect(t.asset.startsWith('assets/games/bermuda/discs/v9/'), isTrue, reason: t.asset);
         expect(t.faName.isNotEmpty, isTrue, reason: t.id);

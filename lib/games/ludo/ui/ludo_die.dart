@@ -13,8 +13,14 @@ class LudoDie extends StatelessWidget {
     this.rolling = false,
     this.t = 0,
     this.glow = true,
+    this.art = true,
   });
 
+  /// NX neon dice art (upload 108848 faces, 102376 3D die while tumbling); the procedural die is the fallback.
+  final bool art;
+
+  static String faceAsset(int face) => 'assets/games/shared/dice/purple_$face.webp';
+  static const String tumbleAsset = 'assets/ui/nx_kit/die3d_purple_b.webp';
   final int? value;
   final Color color;
   final double size;
@@ -38,16 +44,36 @@ class LudoDie extends StatelessWidget {
         offset: Offset(0, -hop),
         child: Transform.rotate(
           angle: angle,
-          child: CustomPaint(
-            size: Size(size, size),
-            painter: _DiePainter(
-              face: face,
-              color: color,
-              blank: value == null && !rolling,
-              glow: glow,
-            ),
-          ),
+          child: art ? _art(face) : _procedural(face),
         ),
+      ),
+    );
+  }
+}
+
+extension on LudoDie {
+  Widget _procedural(int face) => CustomPaint(
+        size: Size(size, size),
+        painter: _DiePainter(face: face, color: color, blank: value == null && !rolling, glow: glow),
+      );
+
+  Widget _art(int face) {
+    final String asset = rolling && (t * 23).floor() % 3 == 0 ? LudoDie.tumbleAsset : LudoDie.faceAsset(face);
+    return Container(
+      width: size,
+      height: size,
+      decoration: glow
+          ? BoxDecoration(borderRadius: BorderRadius.circular(size * 0.24), boxShadow: <BoxShadow>[
+              BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: size * 0.3),
+            ])
+          : null,
+      child: Opacity(
+        opacity: value == null && !rolling ? 0.55 : 1,
+        child: Image.asset(asset,
+            width: size,
+            height: size,
+            gaplessPlayback: true,
+            errorBuilder: (_, __, ___) => _procedural(face)),
       ),
     );
   }

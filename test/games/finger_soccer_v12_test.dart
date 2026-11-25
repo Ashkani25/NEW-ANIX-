@@ -95,6 +95,24 @@ void main() {
     expect(t, lessThan(3.0));
   });
 
+  test('v14: ball friction x1.25 -> a hard free ball settles in ~80% of the v12 time (~1.92 s vs 2.40 s)', () {
+    expect(kBmBallF0, 187.5);
+    expect(kBmBallDrag, 1.75);
+    final BmEngine e = _ballOnly(0);
+    final BmBody b = e.ball!;
+    b
+      ..x = e.CX
+      ..y = e.CY
+      ..vx = 0
+      ..vy = 3000 * K;
+    double t = 0;
+    while ((b.vx != 0 || b.vy != 0) && t < 10) {
+      e.sim(STEP);
+      t += STEP;
+    }
+    expect(t, closeTo(2.4 * .8, .25));
+  });
+
   test('corners: a ball running up the left rail rolls round the corner onto the top rail', () {
     for (int fi = 0; fi < kBmFields.length; fi++) {
       final BmEngine e = _ballOnly(fi);

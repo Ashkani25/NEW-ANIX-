@@ -13,6 +13,7 @@ import '../settings/app_settings.dart';
 import 'anix_kit.dart';
 import 'luxe.dart';
 import 'nx2_assets.dart';
+import 'nx_kit.dart';
 import '../../worlds/oracle_core/persona/oracle_tour.dart';
 import '../../worlds/hub/hub_search.dart';
 
@@ -483,7 +484,13 @@ class Nx2Stat extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(6, 5, 10, 5),
         child: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-          Container(
+          // v14: the NX art kit's coin / gem icons replace the drawn disc for the two currencies.
+          if (icon == Icons.toll_rounded)
+            const NxCoinIcon(size: 20)
+          else if (icon == Icons.diamond_rounded)
+            const NxGemIcon(size: 20)
+          else
+            Container(
             width: 20,
             height: 20,
             decoration: BoxDecoration(

@@ -975,7 +975,18 @@ class _UnoGameViewState extends State<UnoGameView>
                           width: cw + 6,
                           height: cw / kUnoCardAspect + 6,
                           child: Stack(
+                            clipBehavior: Clip.none,
                             children: <Widget>[
+                              Positioned(
+                                left: -cw * 0.3,
+                                right: -cw * 0.3,
+                                top: cw * 0.7,
+                                bottom: -cw * 0.45,
+                                child: IgnorePointer(
+                                  child: Image.asset(kUnoDeckTrayAsset,
+                                      fit: BoxFit.contain, errorBuilder: (_, __, ___) => const SizedBox()),
+                                ),
+                              ),
                               Positioned(
                                   left: 6,
                                   top: 6,

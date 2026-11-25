@@ -560,6 +560,21 @@ class ProfileService extends ChangeNotifier {
     return true;
   }
 
+  /// Coin purchase that never touches the auth-project queue (`nx_purchase`): used for guests (local wallet) by shops
+  /// whose server purchase runs elsewhere (carrom cosmetics: games-project `buy_cosmetic`).
+  bool purchaseLocal(String itemId, int price, {String? nameFa, String? nameEn}) {
+    if (owns(itemId) || price < 0 || coins < price) return false;
+    coins -= price;
+    inventory.add(itemId);
+    bump('shop.bought');
+    OracleBus.emit('spend');
+    _log('shop', 'خرید: ${nameFa ?? itemId}', 'Purchased: ${nameEn ?? itemId}');
+    _checkAchievements();
+    _save();
+    notifyListeners();
+    return true;
+  }
+
   void grantItem(String itemId) {
     inventory.add(itemId);
     _save();

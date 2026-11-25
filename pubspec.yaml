@@ -68,6 +68,16 @@ flutter:
     - assets/games/billiards/
     - assets/games/carrom/
     - assets/games/snakes_ladders/
+    - assets/games/carrom/nx/
+    - assets/games/shared/dice/
+    - assets/games/snakes_ladders/nx/
+    - assets/games/snakes_ladders/classic/
+    - assets/ui/nx_kit/
+    - assets/ui/nx_kit/badges/
+    - assets/ui/nx_kit/cards/
+    - assets/ui/nx_kit/ludo/
+    - assets/ui/nx_kit/emblems/
+    - assets/ui/nx_kit/ornate/
     - assets/games/shared/
     - assets/games/bermuda/balls/v9/
     - assets/games/bermuda/discs/v9/

@@ -234,6 +234,23 @@ const List<BmTeamDef> kBmTeamDefs = <BmTeamDef>[
   BmTeamDef('club21', 'cars', 'Lamborghini II', 'لامبورگینی ۲', 'discs/v9/lamborghini_ii', 10, 8),
   BmTeamDef('club22', 'cars', 'Chevrolet', 'شورلت', 'discs/v9/chevrolet', 8, 7),
   BmTeamDef('club23', 'cars', 'Nissan II', 'نیسان ۲', 'discs/v9/nissan_ii', 7, 8),
+  // v14 (owner upload 2026-11-25, 142990): 16 metallic car-brand crests, cut by tool/nx_kit_export2.py.
+  BmTeamDef('nxcar_mercedes', 'cars', 'Mercedes-Benz Crest', 'مرسدس بنز کرست', 'discs/v11/car_mercedes', 9, 9),
+  BmTeamDef('nxcar_bmw', 'cars', 'BMW Crest', 'بی‌ام‌و کرست', 'discs/v11/car_bmw', 9, 9),
+  BmTeamDef('nxcar_audi', 'cars', 'Audi Crest', 'آئودی کرست', 'discs/v11/car_audi', 8, 9),
+  BmTeamDef('nxcar_porsche', 'cars', 'Porsche Crest', 'پورشه کرست', 'discs/v11/car_porsche', 9, 10),
+  BmTeamDef('nxcar_ferrari', 'cars', 'Ferrari Crest', 'فراری کرست', 'discs/v11/car_ferrari', 10, 9),
+  BmTeamDef('nxcar_lamborghini', 'cars', 'Lamborghini Crest', 'لامبورگینی کرست', 'discs/v11/car_lamborghini', 10, 8),
+  BmTeamDef('nxcar_bentley_purple', 'cars', 'Bentley Royal Purple', 'بنتلی ارغوانی', 'discs/v11/car_bentley_purple', 9, 9),
+  BmTeamDef('nxcar_bentley_green', 'cars', 'Bentley Racing Green', 'بنتلی سبز', 'discs/v11/car_bentley_green', 9, 9),
+  BmTeamDef('nxcar_bugatti', 'cars', 'Bugatti Crest', 'بوگاتی کرست', 'discs/v11/car_bugatti', 10, 9),
+  BmTeamDef('nxcar_mclaren', 'cars', 'McLaren Crest', 'مک‌لارن کرست', 'discs/v11/car_mclaren', 10, 8),
+  BmTeamDef('nxcar_astonmartin', 'cars', 'Aston Martin Crest', 'استون مارتین کرست', 'discs/v11/car_astonmartin', 8, 9),
+  BmTeamDef('nxcar_tesla', 'cars', 'Tesla Crest', 'تسلا کرست', 'discs/v11/car_tesla', 9, 8),
+  BmTeamDef('nxcar_toyota', 'cars', 'Toyota Crest', 'تویوتا کرست', 'discs/v11/car_toyota', 7, 9),
+  BmTeamDef('nxcar_nissan', 'cars', 'Nissan Crest', 'نیسان کرست', 'discs/v11/car_nissan', 7, 8),
+  BmTeamDef('nxcar_ford', 'cars', 'Ford Crest', 'فورد کرست', 'discs/v11/car_ford', 8, 7),
+  BmTeamDef('nxcar_chevrolet', 'cars', 'Chevrolet Crest', 'شورلت کرست', 'discs/v11/car_chevrolet', 8, 7),
   BmTeamDef('club24', 'sport', 'Nike', 'نایکی', 'discs/v9/nike', 9, 8),
   BmTeamDef('club25', 'sport', 'Adidas', 'آدیداس', 'discs/v9/adidas', 8, 9),
   BmTeamDef('club26', 'sport', 'Puma', 'پوما', 'discs/v9/puma', 8, 8),
@@ -444,3 +461,26 @@ const Map<String, BmFa> kBmFA = <String, BmFa>{
   // fallback used by the engine for any id without its own entry
   'stadium': BmFa(1, <int>[0xFFFFD86B, 0xFFFFFFFF, 0xFFFFE9A8], 0),
 };
+
+/// v14: accent colour matched to each car crest (median of the crest's saturated pixels, hand-tuned), used for the
+/// team picker's glow. Teams without an entry keep the neutral glow.
+const Map<String, Color> kBmTeamAccent = <String, Color>{
+  'nxcar_mercedes': Color(0xFFC9D1DE),
+  'nxcar_bmw': Color(0xFF1C6FE0),
+  'nxcar_audi': Color(0xFFC21F2B),
+  'nxcar_porsche': Color(0xFFE0A21C),
+  'nxcar_ferrari': Color(0xFFE3141B),
+  'nxcar_lamborghini': Color(0xFFE3A417),
+  'nxcar_bentley_purple': Color(0xFF7A2FB0),
+  'nxcar_bentley_green': Color(0xFF1E6B45),
+  'nxcar_bugatti': Color(0xFF1E3FB0),
+  'nxcar_mclaren': Color(0xFFF07A12),
+  'nxcar_astonmartin': Color(0xFF0E7A4E),
+  'nxcar_tesla': Color(0xFFD0151A),
+  'nxcar_toyota': Color(0xFFD4151C),
+  'nxcar_nissan': Color(0xFFAEB6C6),
+  'nxcar_ford': Color(0xFF1D4FD0),
+  'nxcar_chevrolet': Color(0xFFF0B52A),
+};
+
+Color? bmTeamAccent(String teamId) => kBmTeamAccent[teamId];

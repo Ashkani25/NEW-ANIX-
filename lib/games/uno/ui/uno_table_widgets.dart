@@ -64,6 +64,40 @@ class UnoTableBackground extends StatelessWidget {
             ),
           ),
         ),
+        // NX card-table kit (upload 139652): the empty card slots of the table and the four suits as faint glyphs
+        IgnorePointer(
+          child: Align(
+            alignment: const Alignment(0, 0.02),
+            child: FractionallySizedBox(
+              widthFactor: 0.62,
+              child: Opacity(
+                opacity: 0.22,
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: <Widget>[
+                  for (final String n in const <String>['slot_cyan', 'slot_violet', 'slot_cyan_b', 'slot_violet_b'])
+                    Flexible(
+                        child: Image.asset('assets/ui/nx_kit/cards/$n.webp',
+                            height: 60, errorBuilder: (_, __, ___) => const SizedBox())),
+                ]),
+              ),
+            ),
+          ),
+        ),
+        for (final (Alignment a, String n) in const <(Alignment, String)>[
+          (Alignment(-0.92, -0.62), 'suit_spade'),
+          (Alignment(0.92, -0.62), 'suit_heart'),
+          (Alignment(-0.92, 0.62), 'suit_diamond'),
+          (Alignment(0.92, 0.62), 'suit_club'),
+        ])
+          IgnorePointer(
+            child: Align(
+              alignment: a,
+              child: Opacity(
+                opacity: 0.16,
+                child: Image.asset('assets/ui/nx_kit/cards/$n.webp',
+                    width: 44, height: 44, errorBuilder: (_, __, ___) => const SizedBox()),
+              ),
+            ),
+          ),
       ],
     );
   }

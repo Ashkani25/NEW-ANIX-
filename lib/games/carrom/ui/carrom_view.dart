@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'package:nexora/core/assets/app_assets.dart';
-import 'package:nexora/core/storage/local_store.dart';
+import 'package:nexora/core/economy/carrom_cosmetics.dart';
+import 'package:nexora/core/economy/carrom_shop_view.dart';
+import 'package:nexora/core/ui2/nx_kit.dart';
 import 'package:nexora/games/shared/wood_pieces.dart';
 import 'package:nexora/core/theme/nx_theme.dart';
 import 'package:nexora/games/core/game_contract.dart';
@@ -50,20 +52,9 @@ class _CarromViewState extends State<CarromView>
   late final Ticker _ticker;
   final CrImages _images = CrImages();
   Duration _last = Duration.zero;
-  int _skin = LocalStore.instance.getInt('carrom.board_skin') ?? 0;
-
-  /// Cycles the table art (wood → black/green → silver → classic), remembered on the device.
-  /// Cycles the ANIX wooden men (ring, star, carved, hex, carbon, minimal), remembered on the device.
-  Future<void> _nextPieces() async {
-    await setWoodPieceIndex('carrom', (woodPieceIndex('carrom') + 1) % kWoodPieceSets.length);
-    await _loadImages();
-  }
-
-  Future<void> _nextSkin() async {
-    _skin = (_skin + 1) % kCrBoardSkins.length;
-    await LocalStore.instance.setInt('carrom.board_skin', _skin);
-    await _loadImages();
-  }
+  /// Boards and piece sets come from the coin shop (CarromCosmetics): the HUD buttons open it; the equipped items are
+  /// drawn (for both sides on this phone).
+  Future<void> _openShop() => showCarromShop(context, isFa: widget.launch.isFa, onChanged: _loadImages);
 
   @override
   void initState() {
@@ -75,20 +66,24 @@ class _CarromViewState extends State<CarromView>
   }
 
   Future<void> _loadImages() async {
-    final CrBoardSkin skin = crBoardSkin(_skin);
-    final board = await crLoadImage(skin.asset, 1024);
-    final WoodPieceSet set = kWoodPieceSets[woodPieceIndex('carrom')];
-    final white = await crLoadImage(set.light, 128);
-    final black = await crLoadImage(set.dark, 128);
-    final queen = await crLoadImage(AppAssets.disc('disc_red'), 96);
-    final s0 = await crLoadImage(AppAssets.disc(_c.strikerSkin0), 128);
-    final s1 = await crLoadImage(AppAssets.disc(_c.strikerSkin1), 128);
+    final CarromCosmetics shop = CarromCosmetics.instance;
+    final CarromCosmetic board = shop.board;
+    final CarromCosmetic set = shop.pieces;
+    final img = await crLoadImage(board.boardAsset ?? board.preview, 1024);
+    final bool nx = set.piecePrefix != null;
+    final white = await crLoadImage(nx ? set.pieceAsset('white')! : set.woodSet!.light, 128);
+    final black = await crLoadImage(nx ? set.pieceAsset('black')! : set.woodSet!.dark, 128);
+    final queen = await crLoadImage(nx ? set.pieceAsset('queen')! : AppAssets.disc('disc_red'), 96);
+    // A set's own strikers replace the default striker only (a striker bought in the Exchange keeps priority).
+    final bool setStrikers = nx && _c.strikerSkin0 == 'striker_soccer';
+    final s0 = await crLoadImage(setStrikers ? set.pieceAsset('striker0')! : AppAssets.disc(_c.strikerSkin0), 128);
+    final s1 = await crLoadImage(setStrikers ? set.pieceAsset('striker1')! : AppAssets.disc(_c.strikerSkin1), 128);
     if (!mounted) return;
     setState(() {
-      _images.board = board;
-      _images.boardPockets = skin.pockets;
+      _images.board = img;
+      _images.boardPockets = board.pockets;
       _images.white = white;
-      _images.menFill = kWoodPieceFill;
+      _images.menFill = nx ? 1 : kWoodPieceFill;
       _images.black = black;
       _images.queen = queen;
       _images.striker0 = s0;
@@ -192,8 +187,8 @@ class _CarromViewState extends State<CarromView>
                                     c: _c,
                                     launch: launch,
                                     onRules: _showRules,
-                                    onSkin: _nextSkin,
-                                    onPieces: _nextPieces,
+                                    onSkin: _openShop,
+                                    onPieces: _openShop,
                                     theme: theme,
                                     error: scheme.error),
                       ),
@@ -435,6 +430,10 @@ class _CrHud extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
+            if (finished) ...<Widget>[
+              const NxKitImage(NxKit.shieldChampion, size: 24, fallback: Icons.emoji_events_rounded),
+              const SizedBox(width: 4),
+            ],
             Expanded(
               child: AnimatedSwitcher(
                 duration:
@@ -464,7 +463,10 @@ class _CrHud extends StatelessWidget {
                 child: SizedBox(
                   width: 30,
                   height: 30,
-                  child: Image.asset(kWoodPieceSets[woodPieceIndex('carrom')].dark, cacheWidth: 64),
+                  child: NxKitImage(
+                      CarromCosmetics.instance.pieces.woodSet?.dark ??
+                          CarromCosmetics.instance.pieces.pieceAsset('black')!,
+                      size: 30),
                 ),
               ),
             ),
@@ -480,8 +482,8 @@ class _CrHud extends StatelessWidget {
                   border: Border.all(color: theme.border.withOpacity(0.85)),
                   color: theme.accent.withOpacity(0.12),
                 ),
-                child: Icon(Icons.palette_rounded,
-                    size: 16, color: theme.accent),
+                child: const Padding(
+                    padding: EdgeInsets.all(4), child: NxKitImage(NxKit.chest, size: 20, fallback: Icons.palette_rounded)),
               ),
             ),
             const SizedBox(width: 6),

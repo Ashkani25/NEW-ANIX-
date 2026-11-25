@@ -16,9 +16,9 @@ void main() {
         expect(SnlRules.resolve(h), t);
         expect(t, lessThan(h));
       });
-      expect(SnlRules.resolve(2), 2);
-      expect(SnlRules.resolve(28), 84);
-      expect(SnlRules.resolve(98), 78);
+      expect(SnlRules.resolve(3), 3);
+      expect(SnlRules.resolve(14), 47); // painted on the NX neon board (20574)
+      expect(SnlRules.resolve(97), 65); // painted on the NX neon board (20574)
     });
 
     test('walk visits every square in order', () {
@@ -29,10 +29,10 @@ void main() {
     test('overshoot bounces back from 100', () {
       expect(SnlRules.walk(97, 5), <int>[98, 99, 100, 99, 98]);
       final SnlEngine e = SnlEngine(playerCount: 2, seed: 1);
-      e.positions[0] = 97;
+      e.positions[0] = 98;
       final SnlMoveResult r = e.move(5);
-      expect(r.landed, 98);
-      expect(r.finalPos, 78); // 98 is a snake head
+      expect(r.landed, 97);
+      expect(r.finalPos, 65); // bounced back onto the 97 snake head
       expect(r.won, isFalse);
       expect(e.winner, isNull);
     });
@@ -47,13 +47,25 @@ void main() {
       expect(r.extraTurn, isFalse);
     });
 
-    test('ladder on 80 reaches 100 and wins', () {
+    test('ladder on 75 climbs to 94 (no win)', () {
       final SnlEngine e = SnlEngine(playerCount: 2, seed: 3);
-      e.positions[0] = 78;
+      e.positions[0] = 73;
       final SnlMoveResult r = e.move(2);
-      expect(r.landed, 80);
+      expect(r.landed, 75);
       expect(r.climbed, isTrue);
-      expect(r.won, isTrue);
+      expect(r.finalPos, 94);
+      expect(r.won, isFalse);
+    });
+
+    test('layout matches the NX neon board art', () {
+      expect(kSnlLadders.length, 7);
+      expect(kSnlSnakes.length, 7);
+      for (final MapEntry<int, int> l in <int, int>{2: 18, 14: 47, 59: 79, 75: 94}.entries) {
+        expect(kSnlLadders[l.key], l.value);
+      }
+      for (final MapEntry<int, int> s in <int, int>{97: 65, 72: 49, 43: 25, 29: 8}.entries) {
+        expect(kSnlSnakes[s.key], s.value);
+      }
     });
 
     test('six gives an extra roll, other rolls pass the turn', () {

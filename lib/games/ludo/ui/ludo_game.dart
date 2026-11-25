@@ -820,13 +820,27 @@ class _LudoGameState extends State<LudoGame> with TickerProviderStateMixin {
                 final double breathe = canTap ? 1 + 0.06 * _pulseCtl.value : 1;
                 return Transform.scale(
                   scale: breathe,
-                  child: LudoDie(
-                    value: _dieValue,
-                    color: col,
-                    size: 64,
-                    rolling: _rolling,
-                    t: _rollCtl.value,
-                    glow: _fancy || canTap,
+                  // NX spinner ring (ludo kit, upload 19001) around the neon die
+                  child: SizedBox(
+                    width: 84,
+                    height: 84,
+                    child: Stack(alignment: Alignment.center, children: <Widget>[
+                      Positioned.fill(
+                        child: Transform.rotate(
+                          angle: _rolling ? _rollCtl.value * 6.283 : 0,
+                          child: Image.asset('assets/ui/nx_kit/ludo/spinner_ring.webp',
+                              errorBuilder: (_, __, ___) => const SizedBox()),
+                        ),
+                      ),
+                      LudoDie(
+                        value: _dieValue,
+                        color: col,
+                        size: 56,
+                        rolling: _rolling,
+                        t: _rollCtl.value,
+                        glow: _fancy || canTap,
+                      ),
+                    ]),
                   ),
                 );
               },

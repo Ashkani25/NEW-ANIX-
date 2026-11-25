@@ -96,9 +96,8 @@ class BgDie extends StatelessWidget {
         child: Transform.rotate(
           angle: dir * t * pi * 5,
           child: Image.asset(
-            variant.isEven
-                ? AppAssets.gamesBackgammonDieA
-                : AppAssets.gamesBackgammonDieB,
+            // NX 3D dice (uploads 102376 / 139674); the older art stays the fallback
+            variant.isEven ? 'assets/ui/nx_kit/die3d_purple.webp' : 'assets/ui/nx_kit/die3d_pink.webp',
             width: size * 1.1,
             height: size * 1.1,
             cacheWidth: 160,
@@ -119,9 +118,17 @@ class BgDie extends StatelessWidget {
       child: AnimatedOpacity(
         opacity: used ? 0.45 : 1.0,
         duration: const Duration(milliseconds: 220),
-        child: CustomPaint(
-          size: Size(size, size),
-          painter: BgDieFacePainter(value, used: used, accent: accent),
+        // NX neon face (upload 102363 dice row); procedural face as fallback
+        child: Image.asset(
+          'assets/games/shared/dice/neon_${value.clamp(1, 6)}.webp',
+          width: size,
+          height: size,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          errorBuilder: (BuildContext c, Object e, StackTrace? s) => CustomPaint(
+            size: Size(size, size),
+            painter: BgDieFacePainter(value, used: used, accent: accent),
+          ),
         ),
       ),
     );

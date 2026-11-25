@@ -452,8 +452,13 @@ class _FsTeamSelectState extends State<FsTeamSelect> {
               key: ValueKey<String>(t.id),
               behavior: HitTestBehavior.opaque,
               onTap: _selectOrBuy,
-              child: FsDisc3D(asset: t.asset, r: 56,
-                  networkUrl: t.crestUrl),
+              child: DecoratedBox(
+                decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: <BoxShadow>[
+                  if (bmTeamAccent(t.id) != null)
+                    BoxShadow(color: bmTeamAccent(t.id)!.withValues(alpha: 0.55), blurRadius: 26, spreadRadius: 2),
+                ]),
+                child: FsDisc3D(asset: t.asset, r: 56, networkUrl: t.crestUrl),
+              ),
             ),
           ),
         ),

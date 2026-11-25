@@ -444,9 +444,13 @@ class SnlTokenDraw {
     this.lift = 0,
     this.scale = 1,
     this.active = false,
+    this.seat = -1,
   });
   final Offset pos;
   final Color color;
+
+  /// Seat of the token (picks its pawn sprite on the NX skins); -1 = unknown.
+  final int seat;
   final double lift;
   final double scale;
   final bool active;
@@ -460,8 +464,11 @@ class SnlTokensPainter extends CustomPainter {
     this.burstAt,
     this.burst = 0,
     this.burstColor = const Color(0xFFFFFFFF),
+    this.pawns,
   });
 
+  /// NX skins: pawn sprite per seat (null entries / list -> the procedural glass token).
+  final List<ui.Image?>? pawns;
   final List<SnlTokenDraw> tokens;
   final double pulse;
   final bool fancy;
@@ -494,6 +501,11 @@ class SnlTokensPainter extends CustomPainter {
     for (final SnlTokenDraw tk in tokens) {
       final double r = u * 0.31 * tk.scale;
       final Offset c = tk.pos * u - Offset(0, tk.lift * u);
+      final ui.Image? pawn = (pawns != null && tk.seat >= 0 && tk.seat < pawns!.length) ? pawns![tk.seat] : null;
+      if (pawn != null) {
+        _drawPawn(canvas, pawn, tk, c, r, u);
+        continue;
+      }
       final Offset ground = tk.pos * u + Offset(0, r * 0.75);
       canvas.drawOval(
           Rect.fromCenter(
@@ -545,6 +557,32 @@ class SnlTokensPainter extends CustomPainter {
     }
   }
 
+  void _drawPawn(Canvas canvas, ui.Image img, SnlTokenDraw tk, Offset c, double r, double u) {
+    final Offset ground = tk.pos * u + Offset(0, r * 0.75);
+    canvas.drawOval(Rect.fromCenter(center: ground, width: r * (1.5 - tk.lift * 0.5), height: r * 0.45),
+        Paint()..color = const Color(0x88000000));
+    if (tk.active) {
+      canvas.drawCircle(
+          ground,
+          r * (1.1 + 0.2 * pulse),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = u * 0.04
+            ..color = tk.color.withValues(alpha: 0.4 + 0.5 * pulse));
+    }
+    final double h = r * 2.5;
+    final double w = h * img.width / img.height;
+    final Rect dst = Rect.fromLTWH(c.dx - w / 2, c.dy + r * 0.75 - h, w, h);
+    if (fancy) {
+      canvas.drawCircle(dst.center, r * 1.1,
+          Paint()
+            ..color = tk.color.withValues(alpha: 0.35)
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.6));
+    }
+    canvas.drawImageRect(img, Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()), dst,
+        Paint()..filterQuality = FilterQuality.medium);
+  }
+
   @override
   bool shouldRepaint(covariant SnlTokensPainter oldDelegate) => true;
 }
@@ -560,8 +598,13 @@ class SnlDie extends StatelessWidget {
     this.rolling = false,
     this.t = 0,
     this.glow = true,
+    this.faceAsset,
+    this.rollAsset,
   });
 
+  /// NX dice art: face image for 1..6 (and the 3D die shown while rolling). Null -> the procedural glass die.
+  final String Function(int face)? faceAsset;
+  final String? rollAsset;
   final int? value;
   final Color color;
   final double size;
@@ -577,6 +620,35 @@ class SnlDie extends StatelessWidget {
         rolling ? sin(t * pi * 4) * 0.6 * (1 - t) + t * pi * 2 : 0;
     final double hop =
         rolling ? sin(t * pi * 3).abs() * size * 0.35 * (1 - t) : 0;
+    final String Function(int face)? art = faceAsset;
+    if (art != null) {
+      final String asset = rolling && rollAsset != null && ((t * 23).floor() % 3 == 0) ? rollAsset! : art(face);
+      return Transform.translate(
+        offset: Offset(0, -hop),
+        child: Transform.rotate(
+          angle: angle,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: glow
+                ? BoxDecoration(borderRadius: BorderRadius.circular(size * 0.22), boxShadow: <BoxShadow>[
+                    BoxShadow(color: color.withValues(alpha: 0.55), blurRadius: size * 0.3),
+                  ])
+                : null,
+            child: Opacity(
+              opacity: value == null && !rolling ? 0.55 : 1,
+              child: Image.asset(asset,
+                  width: size,
+                  height: size,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, __, ___) => CustomPaint(
+                      size: Size(size, size),
+                      painter: _SnlDiePainter(face: face, color: color, blank: false, glow: glow))),
+            ),
+          ),
+        ),
+      );
+    }
     return Transform.translate(
       offset: Offset(0, -hop),
       child: Transform.rotate(
@@ -809,4 +881,179 @@ class SnlDragonCellsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant SnlDragonCellsPainter old) => old.isFa != isFa;
+}
+
+
+// ------------------------------------------------------------------ NX skins (owner art 2026-11-25)
+/// Board skins: 0 dragon frame, 1 procedural, 2 NX neon art board (20574: four ladders and four snakes are painted on
+/// it, the rest of the layout is drawn with NX sprites), 3 NX neon grid (19070 numbers board, every snake / ladder
+/// drawn with NX sprites), 4 classic (procedural squares + the classic wooden ladders and snakes, 142602).
+const int kSnlSkinCount = 5;
+const int kSnlSkinNeonArt = 2, kSnlSkinNeonGrid = 3, kSnlSkinClassic = 4;
+
+const String kSnlNxDir = 'assets/games/snakes_ladders/nx/';
+const String kSnlClassicDir = 'assets/games/snakes_ladders/classic/';
+const String kSnlNeonBoard = '${kSnlNxDir}board_neon.webp';
+const String kSnlNeonGrid = '${kSnlNxDir}board_numbers.webp';
+
+/// Where the 10 x 10 grid sits inside each board art (left, top, right, bottom as image fractions; measured on the
+/// art: 20574 grid lines x 25..974 / y 17..952, 19070 numbers board x 18..462 / y 17..462).
+const List<double> kSnlNeonBoardGrid = <double>[0.0252, 0.0171, 0.9829, 0.9568];
+const List<double> kSnlNeonGridGrid = <double>[0.0376, 0.0355, 0.9645, 0.9645];
+
+/// Ladders / snakes that the 20574 art already paints (kSnlLadders / kSnlSnakes were set from this art).
+const Set<int> kSnlArtLadders = <int>{2, 14, 59, 75};
+const Set<int> kSnlArtSnakes = <int>{97, 72, 43, 29};
+
+/// Sprite per ladder bottom / snake head. NX: 19070 kit; classic: 142602 (heads at the top of every snake sprite).
+const Map<int, String> kSnlNxLadderArt = <int, String>{
+  2: 'ladder_short', 14: 'ladder_long', 59: 'ladder_mid', 75: 'ladder_mid', 6: 'ladder_long', 21: 'ladder_long',
+  53: 'ladder_long',
+};
+const Map<int, String> kSnlNxSnakeArt = <int, String>{
+  97: 'snake_purple_long', 72: 'snake_blue_s', 43: 'snake_pink_s', 29: 'snake_green_s', 91: 'snake_green_s',
+  66: 'snake_pink_s', 17: 'snake_blue_s',
+};
+const Map<int, String> kSnlClassicLadderArt = <int, String>{
+  2: 'ladder_short', 14: 'ladder_long', 59: 'ladder_mid', 75: 'ladder_mid', 6: 'ladder_long', 21: 'ladder_mid',
+  53: 'ladder_long',
+};
+const Map<int, String> kSnlClassicSnakeArt = <int, String>{
+  97: 'snake_green', 72: 'snake_redwhite', 43: 'snake_orange', 29: 'snake_cyan', 91: 'snake_olive', 66: 'snake_amber',
+  17: 'snake_green',
+};
+
+/// Pawn sprites per seat (turquoise, violet, gold, pink, like kSnlSeatColors).
+const List<String> kSnlPawnArt = <String>[
+  '${kSnlNxDir}pawn_blue.webp',
+  '${kSnlNxDir}pawn_violet.webp',
+  '${kSnlNxDir}pawn_yellow.webp',
+  '${kSnlNxDir}pawn_pink.webp',
+];
+
+/// Every sprite a skin needs (dir + name.webp).
+Set<String> snlSkinSprites(int skin) {
+  if (skin == kSnlSkinClassic) {
+    return <String>{
+      for (final String n in kSnlClassicLadderArt.values) '$kSnlClassicDir$n.webp',
+      for (final String n in kSnlClassicSnakeArt.values) '$kSnlClassicDir$n.webp',
+    };
+  }
+  if (skin == kSnlSkinNeonArt || skin == kSnlSkinNeonGrid) {
+    return <String>{
+      for (final String n in kSnlNxLadderArt.values) '$kSnlNxDir$n.webp',
+      for (final String n in kSnlNxSnakeArt.values) '$kSnlNxDir$n.webp',
+      '${kSnlNxDir}snake_orange.webp',
+      '${kSnlNxDir}snake_cyan.webp',
+      '${kSnlNxDir}snake_small.webp',
+      ...kSnlPawnArt,
+    };
+  }
+  return <String>{};
+}
+
+/// Board art drawn so its 10 x 10 grid ([grid] fractions) lands exactly on the board's cells (cell = width / 10).
+class SnlArtBoardPainter extends CustomPainter {
+  SnlArtBoardPainter(this.img, this.grid);
+  final ui.Image img;
+  final List<double> grid;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double u = size.width / 10;
+    final double iw = img.width.toDouble(), ih = img.height.toDouble();
+    final double sx = 10 * u / ((grid[2] - grid[0]) * iw), sy = 10 * u / ((grid[3] - grid[1]) * ih);
+    final Rect dst = Rect.fromLTWH(-grid[0] * iw * sx, -grid[1] * ih * sy, iw * sx, ih * sy);
+    canvas.drawRRect(RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(u * 0.2)),
+        Paint()..color = const Color(0xFF060A24));
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.drawImageRect(img, Rect.fromLTWH(0, 0, iw, ih), dst, Paint()..filterQuality = FilterQuality.medium);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant SnlArtBoardPainter oldDelegate) => oldDelegate.img != img;
+}
+
+/// Snakes and ladders drawn with sprites between their two squares. A ladder is stretched along its length; a snake
+/// keeps its aspect (width capped) and is turned so its head (top of the sprite) sits on the head square.
+class SnlSpriteOverlayPainter extends CustomPainter {
+  SnlSpriteOverlayPainter({
+    required this.images,
+    required this.ladderArt,
+    required this.snakeArt,
+    required this.dir,
+    this.skipLadders = const <int>{},
+    this.skipSnakes = const <int>{},
+    this.t = 0,
+    this.decor = false,
+  });
+  final Map<String, ui.Image> images;
+  final Map<int, String> ladderArt, snakeArt;
+  final String dir;
+  final Set<int> skipLadders, skipSnakes;
+  final double t;
+
+  /// Neon grid skin: two resting snakes on the launch strip below the board.
+  final bool decor;
+
+  static final Paint _p = Paint()..filterQuality = FilterQuality.medium;
+
+  void _sprite(Canvas canvas, ui.Image img, Offset head, Offset tail, double width, double overhang,
+      {bool keepAspect = false, double wobble = 0}) {
+    final Offset v = head - tail;
+    final double len = v.distance + overhang;
+    if (len <= 0) return;
+    double w = width;
+    if (keepAspect) w = (len * img.width / img.height).clamp(width * 0.5, width * 1.6);
+    final double ang = atan2(v.dy, v.dx) + pi / 2 + wobble;
+    final Offset mid = (head + tail) / 2;
+    canvas.save();
+    canvas.translate(mid.dx, mid.dy);
+    canvas.rotate(ang);
+    canvas.drawImageRect(img, Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromCenter(center: Offset.zero, width: w, height: len), _p);
+    canvas.restore();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double u = size.width / 10;
+    kSnlLadders.forEach((int a, int b) {
+      if (skipLadders.contains(a)) return;
+      final ui.Image? img = images['$dir${ladderArt[a] ?? 'ladder_long'}.webp'];
+      if (img == null) return;
+      _sprite(canvas, img, SnlGeom.cell(b) * u, SnlGeom.cell(a) * u, u * 0.62, u * 0.55);
+    });
+    kSnlSnakes.forEach((int h, int tl) {
+      if (skipSnakes.contains(h)) return;
+      final ui.Image? img = images['$dir${snakeArt[h] ?? 'snake_green'}.webp'];
+      if (img == null) return;
+      final double wob = sin(t * 2 * pi + h) * 0.025;
+      _sprite(canvas, img, SnlGeom.cell(h) * u, SnlGeom.cell(tl) * u, u * 1.1, u * 0.7, keepAspect: true, wobble: wob);
+    });
+    if (decor) {
+      final ui.Image? a = images['${kSnlNxDir}snake_orange.webp'];
+      final ui.Image? b = images['${kSnlNxDir}snake_cyan.webp'];
+      final ui.Image? c = images['${kSnlNxDir}snake_small.webp'];
+      final double y = 10.45 * u;
+      if (a != null) {
+        canvas.drawImageRect(a, Rect.fromLTWH(0, 0, a.width.toDouble(), a.height.toDouble()),
+            Rect.fromCenter(center: Offset(7.2 * u, y), width: 2.4 * u, height: 2.4 * u * a.height / a.width), _p);
+      }
+      if (b != null) {
+        canvas.drawImageRect(b, Rect.fromLTWH(0, 0, b.width.toDouble(), b.height.toDouble()),
+            Rect.fromCenter(center: Offset(9.0 * u, y), width: 1.3 * u, height: 1.3 * u * b.height / b.width), _p);
+      }
+      if (c != null) {
+        canvas.drawImageRect(c, Rect.fromLTWH(0, 0, c.width.toDouble(), c.height.toDouble()),
+            Rect.fromCenter(center: Offset(5.4 * u, y), width: 1.0 * u, height: 1.0 * u * c.height / c.width), _p);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant SnlSpriteOverlayPainter oldDelegate) =>
+      oldDelegate.t != t || oldDelegate.images.length != images.length;
 }

@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/catalog/catalog.dart';
+import '../../core/economy/carrom_shop_view.dart';
 import '../../core/economy/gem_shop.dart';
+import '../../core/ui2/nx_kit.dart';
 import '../../games/finger_soccer/core/bm_data.dart';
 import '../../games/finger_soccer/core/bm_engine.dart';
 import '../../core/profile/achievements.dart';
@@ -135,7 +137,7 @@ class _ExchangePageState extends ConsumerState<ExchangePage> {
   Widget build(BuildContext context) {
     final List<CatalogItem> featured = featuredForDate(_day);
     final NxThemeColors visual = NxThemeColors.of(context);
-    final int tabCount = _kTabs.length + 2;
+    final int tabCount = _kTabs.length + 3;
     return NxWorldScaffold(
       title: 'NEXORA EXCHANGE',
       palette: WorldPalette.exchange,
@@ -185,8 +187,13 @@ class _ExchangePageState extends ConsumerState<ExchangePage> {
                     dividerColor: Colors.transparent,
                     tabs: <Widget>[
                       Tab(
-                        icon: const Icon(Icons.diamond_rounded, size: 18, color: kGemColor),
+                        icon: const NxGemIcon(size: 18),
                         text: context.tx('تیم‌ها · الماس', 'Teams · Gems'),
+                        iconMargin: EdgeInsets.zero,
+                      ),
+                      Tab(
+                        icon: const NxCoinIcon(size: 18),
+                        text: context.tx('کارم · سکه', 'Carrom · Coins'),
                         iconMargin: EdgeInsets.zero,
                       ),
                       for (final ItemCategory c in _kTabs)
@@ -208,6 +215,11 @@ class _ExchangePageState extends ConsumerState<ExchangePage> {
           body: TabBarView(
             children: <Widget>[
               const _GemTeamsTab(),
+              CarromShopPanel(
+                isFa: context.isFa,
+                scrollHeader: (BuildContext ctx) =>
+                    <Widget>[SliverOverlapInjector(handle: NestedScrollView.sliverOverlapAbsorberHandleFor(ctx))],
+              ),
               for (final ItemCategory c in _kTabs) _CategoryGrid(category: c),
               const _HistoryTab(),
             ],
@@ -337,8 +349,7 @@ class _WalletPanel extends ConsumerWidget {
                       blurRadius: 18)
                 ],
               ),
-              child:
-                  Icon(Icons.toll_rounded, color: visual.background, size: 30),
+              child: const Padding(padding: EdgeInsets.all(6), child: NxCoinIcon(size: 40)),
             ),
             const SizedBox(width: NxSpace.md),
             Expanded(
@@ -353,7 +364,7 @@ class _WalletPanel extends ConsumerWidget {
                             fontSize: 30,
                             fontWeight: FontWeight.w900)),
                     Row(children: <Widget>[
-                      const Icon(Icons.diamond_rounded, size: 18, color: kGemColor),
+                      const NxGemIcon(size: 18),
                       const SizedBox(width: 4),
                       Text('${context.tx('الماس', 'Gems')}: ${_digits(context, '${p.gems}')}',
                           style: const TextStyle(color: kGemColor, fontSize: 15, fontWeight: FontWeight.w900)),

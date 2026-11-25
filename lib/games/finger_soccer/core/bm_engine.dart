@@ -18,7 +18,8 @@ import 'bm_data.dart';
 // Reference proportions (owner request 2026-11-20, measured on his reference screenshot, pitch 620 px wide): disc
 // ~75 px = 0.12 of the playing width, ball ~35 px = 0.056, goal mouth ~213 px = 0.34. On the 880-unit default pitch
 // that is a 106-unit disc, a 50-unit ball and a 300-unit mouth.
-const double K = 1.27, PR = 53.0, BR = 25.0, STEP = 1 / 240, LMAX = 320;
+/// v14 (owner request 2026-11-25): the ball is 2% bigger (radius x1.02). Before: BR 25.0.
+const double K = 1.27, PR = 53.0, BR = 25.5, STEP = 1 / 240, LMAX = 320;
 /// Ball spin / curve keeps the original tuning radius so the bigger collider does not change curl after bounces.
 const double SPIN_R = 28.8;
 /// Visual scale of the goal sprite (assets/games/bermuda/goals/white.webp, the only goal art): drawn at full size so
@@ -118,7 +119,11 @@ const double kBmLaunch = 1.97;
 /// slow creeping tail: from a hard strike the ball now settles in ~2.0-2.6 s instead of ~4.2-5.1 s, while still
 /// covering ~60-70% of the old distance. The constant part ramps in over [kBmBallF0Ramp] (was 300).
 /// Before: kBmBallF0 23, kBmBallDrag 1.08, ramp 300.
-const double kBmBallF0 = 150, kBmBallDrag = 1.4, kBmBallF0Ramp = 40;
+/// v14 (owner request 2026-11-25: "the ball rolls ~20% too long"): both parts of the ball's friction law are x1.25, which
+/// is an exact time-scaling of the roll (v(t) becomes v_old(1.25 t)): from the same launch the ball comes to rest in
+/// 80% of the v12 time (hard strike ~2.4 s -> ~1.9 s), covering ~80% of the distance. Launch speed, strike power and
+/// every disc constant are unchanged (ball only). Before: kBmBallF0 150, kBmBallDrag 1.4 (ramp 40 kept).
+const double kBmBallF0 = 187.5, kBmBallDrag = 1.75, kBmBallF0Ramp = 40;
 /// v12 (owner request 2026-11-24: "the ball must roll round the corners"): every corner of the pitch is a round
 /// cushion of this radius (world units, > the disc radius [PR]) instead of the near-square art corner, so the ball and
 /// the discs are never wedged in a corner: a glancing body rolls round the cushion onto the next rail.

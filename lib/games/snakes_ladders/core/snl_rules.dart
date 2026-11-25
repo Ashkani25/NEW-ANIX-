@@ -6,31 +6,30 @@ import 'dart:math';
 
 const int kSnlGoal = 100;
 
+/// Layout v2 (owner art 2026-11-25): the NX neon board (assets/games/snakes_ladders/nx/board_neon.webp, upload
+/// 20574) paints four ladders (2-18, 14-47, 59-79, 75-94) and four snakes (97-65, 72-49, 43-25, 29-8); the rules use
+/// exactly those, plus three ladders and three snakes on free squares that every skin draws with sprites
+/// (snl_board.dart kSnlNxLadderArt / kSnlClassicLadderArt). Before (v1): 9 ladders / 10 snakes (1-38 ... 98-78).
 /// Ladder bottom -> top.
 const Map<int, int> kSnlLadders = <int, int>{
-  1: 38,
-  4: 14,
-  9: 31,
-  21: 42,
-  28: 84,
-  36: 44,
-  51: 67,
-  71: 91,
-  80: 100,
+  2: 18,
+  14: 47,
+  59: 79,
+  75: 94,
+  6: 35,
+  21: 60,
+  53: 88,
 };
 
 /// Snake head -> tail.
 const Map<int, int> kSnlSnakes = <int, int>{
-  16: 6,
-  47: 26,
-  49: 11,
-  56: 53,
-  62: 19,
-  64: 60,
-  87: 24,
-  93: 73,
-  95: 75,
-  98: 78,
+  97: 65,
+  72: 49,
+  43: 25,
+  29: 8,
+  91: 70,
+  66: 45,
+  17: 4,
 };
 
 class SnlMoveResult {

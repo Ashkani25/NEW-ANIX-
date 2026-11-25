@@ -35,6 +35,10 @@ String unoColorName(UnoColor c, bool isFa) {
 /// Card aspect ratio (width / height).
 const double kUnoCardAspect = 0.68;
 
+/// NX card-table kit (upload 139652): card back and the deck tray under the draw pile.
+const String kUnoCardBackAsset = 'assets/ui/nx_kit/cards/card_back.webp';
+const String kUnoDeckTrayAsset = 'assets/ui/nx_kit/cards/deck_tray.webp';
+
 /// A procedurally drawn NX card (face or back).
 class UnoCardView extends StatelessWidget {
   const UnoCardView({
@@ -59,6 +63,33 @@ class UnoCardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final double h = width / kUnoCardAspect;
+    final Widget painted = CustomPaint(
+      painter: _UnoCardPainter(card: card, faceUp: faceUp && card != null, glow: glow, dim: dim, wildColor: wildColor),
+    );
+    if (!(faceUp && card != null)) {
+      // NX card back (upload 139652); the procedural back is the fallback
+      return SizedBox(
+        width: width,
+        height: h,
+        child: RepaintBoundary(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(width * 0.12),
+              boxShadow: <BoxShadow>[
+                const BoxShadow(color: Color(0x66000000), blurRadius: 4, offset: Offset(0, 2)),
+                if (glow) BoxShadow(color: const Color(0xFF9D6BFF).withValues(alpha: 0.8), blurRadius: width * 0.18),
+              ],
+            ),
+            child: Image.asset(kUnoCardBackAsset,
+                width: width,
+                height: h,
+                fit: BoxFit.fill,
+                cacheWidth: (width * 3).round().clamp(32, 320),
+                errorBuilder: (_, __, ___) => painted),
+          ),
+        ),
+      );
+    }
     return SizedBox(
       width: width,
       height: h,

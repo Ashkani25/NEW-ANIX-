@@ -82,6 +82,9 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
   final List<Offset> _swipe = <Offset>[];
   final List<Offset> _trail = <Offset>[];
   BasketLayout _lay = BasketLayout.fit(kCanvasW, kCanvasH);
+  /// Sprite pops on the canvas (explosion / swish ring after a make): role, canvas position, age (s).
+  final List<(String, Offset, double)> _pops = <(String, Offset, double)>[];
+  double _throwAge = 9;
   EdgeInsets _pad = EdgeInsets.zero;
 
   GameLaunch get l => widget.launch;
@@ -145,6 +148,23 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
 
   int scoreOf(int seat) => lineOf(seat).score;
 
+  /// Seat with the strictly highest score (-1 on a tie).
+  int _leader() {
+    int best = -1, top = -1;
+    bool tie = false;
+    for (int s = 0; s < seats; s++) {
+      final int v = scoreOf(s);
+      if (v > top) {
+        top = v;
+        best = s;
+        tie = false;
+      } else if (v == top) {
+        tie = true;
+      }
+    }
+    return tie ? -1 : best;
+  }
+
   @override
   void tick(double dt) {
     if (_bannerT > 0) {
@@ -168,6 +188,8 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
           HapticFeedback.heavyImpact();
         case 'swish':
         case 'score':
+          _pops.add(('fx_explosion', _p(court.hoopX, kRimHeight, kRimZ), 0));
+          if (e.kind == 'swish') _pops.add(('fx_swish', _p(court.hoopX, kRimHeight - 0.2, kRimZ), 0));
           _netSway = 1;
           _netStretch = 1;
           fx.burst(at + Offset(0, 14 * _lay.scale), court.shotOnFire ? const Color(0xFFFF6A1D) : skin.accent2,
@@ -194,6 +216,15 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
       }
     }
     court.events.clear();
+    for (int i = _pops.length - 1; i >= 0; i--) {
+      final (String, Offset, double) q = _pops[i];
+      if (q.$3 + dt > 0.7) {
+        _pops.removeAt(i);
+      } else {
+        _pops[i] = (q.$1, q.$2, q.$3 + dt);
+      }
+    }
+    _throwAge = court.phase == BallPhase.flying ? _throwAge + dt : 0;
     _netSway = math.max(0, _netSway - dt * 1.6);
     _netStretch = math.max(0, _netStretch - dt * 2.5);
     if (court.phase == BallPhase.flying || court.phase == BallPhase.dead) {
@@ -289,6 +320,10 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
     if (aroundRim && !behindBoard) _paintBall(canvas);
     _paintRim(canvas, front: true);
     if (!behindBoard && !behindRim && !aroundRim) _paintBall(canvas);
+    for (final (String, Offset, double) q in _pops) {
+      final double k = q.$3 / 0.7, sz = (q.$1 == 'fx_swish' ? 44 : 64) * (0.6 + 0.7 * k);
+      skin.drawSprite(canvas, q.$1, Rect.fromCenter(center: q.$2, width: sz, height: sz), opacity: (1 - k).clamp(0.0, 1.0));
+    }
     canvas.restore();
     // swipe trail (screen space)
     if (_swipe.length > 1) {
@@ -373,6 +408,16 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
 
   void _paintStanchion(Canvas canvas) {
     final double hx = court.hoopX;
+    final ui.Image? stand = skin.image('stand');
+    if (stand != null) {
+      // NX pole + pad (139207) from under the backboard down to the floor behind the rim
+      final Rect board = boardRect(hx);
+      final Offset base = _p(hx, 0, kBoardZ + 0.6);
+      final double h = base.dy - board.bottom + board.height * 0.1;
+      final double w = h * stand.width / stand.height;
+      skin.drawSprite(canvas, 'stand', Rect.fromLTWH(board.center.dx - w / 2, base.dy - h, w, h));
+      return;
+    }
     const double z = kBaselineZ + 0.9;
     final Offset base = _p(hx, 0, z), top = _p(hx, kBoardBottom + 0.3, z);
     final double w = 0.18 * BasketCamera.project(hx, 0, z).scale;
@@ -392,7 +437,14 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
   void _paintBoard(Canvas canvas) {
     final double hx = court.hoopX;
     final Rect board = boardRect(hx);
-    if (skin.drawSprite(canvas, 'hoop', board)) return;
+    final ui.Image? hoop = skin.image('hoop');
+    if (hoop != null) {
+      // keep the art's aspect: full board width, bottom edge (where the ring hangs) on the physics board's bottom
+      final double h = board.width * hoop.height / hoop.width;
+      if (court.onFire) paintGlow(canvas, board.center, board.width * 0.6, const Color(0xFFFF6A1D), 0.35);
+      skin.drawSprite(canvas, 'hoop', Rect.fromLTWH(board.left, board.bottom - h, board.width, h));
+      return;
+    }
     final double s = BasketCamera.project(hx, 0, kBoardZ).scale;
     canvas.drawRect(board.shift(Offset(0.04 * s, 0.06 * s)), Paint()
       ..color = const Color(0x44000000)
@@ -496,6 +548,28 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
           Paint()..color = (court.onFire ? const Color(0xFFFF6A1D) : Colors.white).withValues(alpha: 0.14 * k));
     }
     if (court.onFire) paintGlow(canvas, c, r * 2.4, const Color(0xFFFF6A1D), 0.6);
+    if (court.onFire && skin.has('ball_fire')) {
+      // flaming ball art (139207): the ball sits in the lower part of the sprite, flames trail upwards
+      final ui.Image f = skin.image('ball_fire')!;
+      final double w = r * 2 * 1.15, h = w * f.height / f.width;
+      skin.drawSprite(canvas, 'ball_fire', Rect.fromLTWH(c.dx - w / 2, c.dy + r * 1.1 - h, w, h));
+      return;
+    }
+    if (_throwAge < 0.18 && _trail.length > 2 && skin.has('ball_fast')) {
+      // motion-blur ball right after the release, streak opposite to the flight
+      final Offset d = _trail.last - _trail[_trail.length - 2];
+      if (d.distance > 0.5) {
+        final ui.Image f = skin.image('ball_fast')!;
+        final double h = r * 2 * 1.05, w = h * f.width / f.height;
+        canvas.save();
+        canvas.translate(c.dx, c.dy);
+        canvas.rotate(math.atan2(d.dy, d.dx));
+        // the sprite's ball is on its right end, streak to the left
+        skin.drawSprite(canvas, 'ball_fast', Rect.fromLTWH(r - w, -h / 2, w, h));
+        canvas.restore();
+        return;
+      }
+    }
     if (skin.drawSprite(canvas, 'ball', Rect.fromCircle(center: c, radius: r), angle: court.angle)) return;
     paintSphere(canvas, c, r, const Color(0xFFE8731E), shadow: false);
     canvas.save();
@@ -551,14 +625,21 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
                                 size: 13, color: skin.player(s)),
                             const SizedBox(width: 4),
                             Text('${scoreOf(s)}', style: const TextStyle(fontSize: 14)),
+                            if (court.shots > 0 && _leader() == s) ...<Widget>[
+                              const SizedBox(width: 3),
+                              Image.asset('assets/games/basketball_battle/trophy.webp',
+                                  width: 14, height: 14, errorBuilder: (_, __, ___) => const SizedBox()),
+                            ],
                           ]),
                         ),
                     ]),
                   ),
-                  ArcadeHudPill(
+                  _BasketScoreboard(
                     key: const ValueKey<String>('bb-clock'),
-                    color: left <= 10 ? const Color(0xFFFF2D55) : skin.accent2,
-                    child: Text(basketClock(left), style: const TextStyle(fontSize: 16)),
+                    home: scoreOf(me),
+                    guest: <int>[for (int s = 0; s < seats; s++) if (s != me) scoreOf(s)].fold(0, math.max),
+                    clock: basketClock(left),
+                    urgent: left <= 10,
                   ),
                 ]),
               ),
@@ -570,7 +651,20 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
                   child: Center(
                       child: ArcadeHudPill(
                           color: const Color(0xFFFF6A1D),
-                          child: Text(l.tx('آتشین x2', 'ON FIRE x2'), style: const TextStyle(fontSize: 12)))),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                            Image.asset('assets/games/basketball_battle/medal.webp',
+                                width: 14, height: 18, errorBuilder: (_, __, ___) => const SizedBox()),
+                            const SizedBox(width: 4),
+                            Text(l.tx('آتشین x2', 'ON FIRE x2'), style: const TextStyle(fontSize: 12)),
+                          ]))),
+                ),
+              if (court.countdown > 0)
+                Positioned(
+                  left: _pad.left + 8,
+                  right: _pad.right + 8,
+                  top: _lay.oy + 300 * _lay.scale,
+                  height: 190 * _lay.scale,
+                  child: IgnorePointer(child: _BasketVersus(seats: seats)),
                 ),
               if (_banner.isNotEmpty)
                 Positioned(
@@ -596,5 +690,76 @@ class _BasketGameState extends ArcadeLoopState<BasketGame> {
         ),
       ]);
     });
+  }
+}
+
+
+/// HOME / TIME / GUEST scoreboard (139207 art, printed digits painted out) with the live numbers.
+class _BasketScoreboard extends StatelessWidget {
+  const _BasketScoreboard(
+      {super.key, required this.home, required this.guest, required this.clock, required this.urgent});
+  final int home, guest;
+  final String clock;
+  final bool urgent;
+
+  @override
+  Widget build(BuildContext context) {
+    const double w = 88, h = w * 242 / 512; // fits the 104-dp HUD band (BasketLayout.kHudHeight)
+    TextStyle st(double size, Color c) => TextStyle(
+        color: c,
+        fontSize: size,
+        fontWeight: FontWeight.w900,
+        height: 1,
+        shadows: <Shadow>[Shadow(color: c, blurRadius: 8)]);
+    return SizedBox(
+      width: w,
+      height: h,
+      child: Stack(children: <Widget>[
+        Positioned.fill(
+          child: Image.asset('assets/games/basketball_battle/scoreboard_blank.webp',
+              fit: BoxFit.fill,
+              errorBuilder: (_, __, ___) => DecoratedBox(
+                  decoration: BoxDecoration(
+                      color: const Color(0xEE0E1426), borderRadius: BorderRadius.circular(10)))),
+        ),
+        Positioned(
+            left: w * 0.085,
+            width: w * 0.27,
+            top: h * 0.29,
+            height: h * 0.38,
+            child: Center(child: FittedBox(child: Text('$home', style: st(14, const Color(0xFF6FD8FF)))))),
+        Positioned(
+            left: w * 0.385,
+            width: w * 0.24,
+            top: h * 0.27,
+            height: h * 0.2,
+            child: Center(
+                child: FittedBox(
+                    child: Text(clock, style: st(9, urgent ? const Color(0xFFFF2D55) : const Color(0xFFFFD34E)))))),
+        Positioned(
+            left: w * 0.655,
+            width: w * 0.27,
+            top: h * 0.29,
+            height: h * 0.38,
+            child: Center(child: FittedBox(child: Text('$guest', style: st(14, const Color(0xFFFF6B6B)))))),
+      ]),
+    );
+  }
+}
+
+/// Countdown "versus" card: home player (blue 23) and guest player (red 24) around the NX shield.
+class _BasketVersus extends StatelessWidget {
+  const _BasketVersus({required this.seats});
+  final int seats;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget img(String n) => Image.asset('assets/games/basketball_battle/$n.webp',
+        fit: BoxFit.contain, errorBuilder: (_, __, ___) => const SizedBox());
+    return Row(crossAxisAlignment: CrossAxisAlignment.end, children: <Widget>[
+      Expanded(child: img('player_blue')),
+      Expanded(child: Padding(padding: const EdgeInsets.only(bottom: 30), child: img('shield'))),
+      Expanded(child: img('player_red')),
+    ]);
   }
 }

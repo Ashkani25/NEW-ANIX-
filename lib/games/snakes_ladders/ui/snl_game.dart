@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:nexora/core/storage/local_store.dart';
 import 'package:nexora/core/ui2/nx2_board_art.dart';
 import 'package:flutter/services.dart';
+import 'package:nexora/core/ui2/nx_kit.dart';
 import 'package:nexora/core/theme/nx_theme.dart';
 import 'package:nexora/games/core/game_contract.dart';
 
@@ -21,12 +22,53 @@ class SnlGame extends StatefulWidget {
 }
 
 class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
-  /// 0 = NX2 dragon board, 1 = neon classic.
-  int _skin = (LocalStore.instance.getInt('snakes_ladders.board_skin') ?? 0) % 2;
+  /// Board skins (snl_board.dart kSnlSkinCount): 0 NX2 dragon, 1 neon procedural, 2 NX neon art board (default),
+  /// 3 NX neon grid, 4 classic wooden ladders.
+  int _skin = (LocalStore.instance.getInt('snakes_ladders.board_skin2') ?? kSnlSkinNeonArt) % kSnlSkinCount;
   void _nextSkin() {
-    setState(() => _skin = (_skin + 1) % 2);
-    LocalStore.instance.setInt('snakes_ladders.board_skin', _skin);
+    setState(() => _skin = (_skin + 1) % kSnlSkinCount);
+    LocalStore.instance.setInt('snakes_ladders.board_skin2', _skin);
+    _loadSkinArt();
   }
+
+  /// Decoded art of the current skin (sprites by asset path); empty -> procedural fallbacks.
+  final Map<String, ui.Image> _art = <String, ui.Image>{};
+  ui.Image? _boardArt;
+  String? _eventArt;
+  final Stopwatch _clock = Stopwatch();
+  bool get _nxSkin => _skin == kSnlSkinNeonArt || _skin == kSnlSkinNeonGrid;
+  bool get _spriteSkin => _nxSkin || _skin == kSnlSkinClassic;
+
+  Future<ui.Image?> _decode(String asset) async {
+    try {
+      final ByteData d = await DefaultAssetBundle.of(context).load(asset);
+      final ui.Codec c = await ui.instantiateImageCodec(d.buffer.asUint8List());
+      return (await c.getNextFrame()).image;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _loadSkinArt() async {
+    final int skin = _skin;
+    final Map<String, ui.Image> art = <String, ui.Image>{};
+    for (final String a in snlSkinSprites(skin)) {
+      final ui.Image? img = _art[a] ?? await _decode(a);
+      if (img != null) art[a] = img;
+    }
+    final ui.Image? board = skin == kSnlSkinNeonArt
+        ? await _decode(kSnlNeonBoard)
+        : (skin == kSnlSkinNeonGrid ? await _decode(kSnlNeonGrid) : null);
+    if (!mounted || skin != _skin) return;
+    setState(() {
+      _art
+        ..clear()
+        ..addAll(art);
+      _boardArt = board;
+    });
+  }
+
+  List<ui.Image?>? get _pawns => _nxSkin ? <ui.Image?>[for (final String a in kSnlPawnArt) _art[a]] : null;
 
   late SnlEngine _engine;
   late AnimationController _rollCtl;
@@ -77,6 +119,10 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
     super.initState();
     final int seed = _l.seed ?? DateTime.now().microsecondsSinceEpoch;
     _engine = SnlEngine(playerCount: _l.playerCount, seed: seed);
+    _clock.start();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadSkinArt();
+    });
     _shown = List<int>.filled(_n, 0);
     _climbs = List<int>.filled(_n, 0);
     _bites = List<int>.filled(_n, 0);
@@ -333,7 +379,7 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
     if (res.climbed || res.bitten) {
       final Offset a = SnlGeom.cell(res.landed);
       final Offset b = SnlGeom.cell(res.finalPos);
-      final List<Offset> glide = res.climbed
+      final List<Offset> glide = res.climbed || _spriteSkin
           ? <Offset>[a, b]
           : SnlGeom.snakePath(a, b,
               _fancy ? SnlOverlayPainter.snakePhase(_ambientCtl.value) : 0);
@@ -346,6 +392,9 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
         _shown[seat] = res.landed;
         _glidePath = glide;
         _gliding = true;
+        _eventArt = _nxSkin
+            ? '${kSnlNxDir}art_${res.climbed ? const <String>['ladder_a', 'ladder_b', 'ladder_c', 'ladder_d'][res.landed % 4] : const <String>['snake_pink', 'snake_blue', 'snake_purple', 'snake_pink_b'][res.landed % 4]}.webp'
+            : null;
         if (res.climbed) {
           _status(
               'پل نور! ${_nameFa(seat)} تا ${_faNum(res.finalPos)} بالا رفت',
@@ -371,6 +420,7 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
     }
 
     setState(() {
+      _eventArt = null;
       _shown[seat] = res.finalPos;
       _movingSeat = null;
       _hopPath = <Offset>[];
@@ -478,6 +528,7 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
       if (seat == _movingSeat || _shown[seat] > 0) continue;
       out.add(SnlTokenDraw(
           pos: SnlGeom.pad(seat),
+          seat: seat,
           color: _color(seat),
           active: waiting && seat == _uiTurn));
     }
@@ -493,6 +544,7 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
         }
         out.add(SnlTokenDraw(
           pos: c,
+          seat: seats[i],
           color: _color(seats[i]),
           scale: scale,
           active: waiting && seats[i] == _uiTurn,
@@ -503,6 +555,7 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
     if (m != null && (_hopPath.isNotEmpty || _glidePath.isNotEmpty)) {
       out.add(SnlTokenDraw(
         pos: _movingPos(_hopCtl.value, _glideCtl.value),
+        seat: m,
         color: _color(m),
         lift: _movingLift(_hopCtl.value),
         scale: 1.08,
@@ -520,10 +573,23 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
           child: Column(
             children: <Widget>[
               const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _playersBar(),
-              ),
+              if (_nxSkin && _n == 2)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: _SnlTurnTimerBar(
+                    left: _name(0),
+                    right: _name(1),
+                    turn: _finished ? -1 : _uiTurn,
+                    clock: _clock,
+                    isFa: _l.isFa,
+                    onSkin: _nextSkin,
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _playersBar(),
+                ),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(10),
@@ -681,6 +747,17 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
                     child: RepaintBoundary(
                       child: dragon
                           ? CustomPaint(painter: SnlDragonCellsPainter(isFa: _l.isFa))
+                          : (_nxSkin && _boardArt != null)
+                          ? Stack(children: <Widget>[
+                              Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  width: boardSize.width,
+                                  height: boardSize.height,
+                                  child: CustomPaint(
+                                      painter: SnlArtBoardPainter(_boardArt!,
+                                          _skin == kSnlSkinNeonArt ? kSnlNeonBoardGrid : kSnlNeonGridGrid))),
+                            ])
                           : CustomPaint(
                         painter: SnlBoardPainter(
                             fancy: _fancy,
@@ -700,8 +777,19 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
                     child: RepaintBoundary(
                       child: AnimatedBuilder(
                         animation: _ambientCtl,
-                        builder: (BuildContext context, Widget? child) =>
-                            CustomPaint(
+                        builder: (BuildContext context, Widget? child) => _spriteSkin && _art.isNotEmpty
+                            ? CustomPaint(
+                                painter: SnlSpriteOverlayPainter(
+                                  images: _art,
+                                  dir: _nxSkin ? kSnlNxDir : kSnlClassicDir,
+                                  ladderArt: _nxSkin ? kSnlNxLadderArt : kSnlClassicLadderArt,
+                                  snakeArt: _nxSkin ? kSnlNxSnakeArt : kSnlClassicSnakeArt,
+                                  skipLadders: _skin == kSnlSkinNeonArt && _boardArt != null ? kSnlArtLadders : const <int>{},
+                                  skipSnakes: _skin == kSnlSkinNeonArt && _boardArt != null ? kSnlArtSnakes : const <int>{},
+                                  t: _fancy ? _ambientCtl.value : 0,
+                                ),
+                              )
+                            : CustomPaint(
                           painter: SnlOverlayPainter(
                               t: _ambientCtl.value,
                               fancy: _fancy,
@@ -729,10 +817,40 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
                           burstAt: _burstAt,
                           burst: _burstCtl.value,
                           burstColor: _burstColor,
+                          pawns: _pawns,
                         ),
                       ),
                     ),
                   ),
+                  if (_eventArt != null)
+                    Positioned(
+                      top: w * 0.02,
+                      right: w * 0.02,
+                      width: w * 0.24,
+                      height: w * 0.3,
+                      child: IgnorePointer(
+                        child: Image.asset(_eventArt!, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const SizedBox()),
+                      ),
+                    ),
+                  if (_spriteSkin && _skin == kSnlSkinNeonGrid)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: boardSize.width,
+                      height: h,
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: SnlSpriteOverlayPainter(
+                              images: _art,
+                              dir: kSnlNxDir,
+                              ladderArt: const <int, String>{},
+                              snakeArt: const <int, String>{},
+                              skipLadders: kSnlLadders.keys.toSet(),
+                              skipSnakes: kSnlSnakes.keys.toSet(),
+                              decor: true),
+                        ),
+                      ),
+                    ),
                   if (_bannerFa != null) _banner(w),
                 ],
               ),
@@ -767,7 +885,16 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
                   blurRadius: 28)
             ],
           ),
-          child: Text(
+          child: Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
+            if (_finished) ...<Widget>[
+              Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                NxKitImage(NxKit.star, size: size * 0.09, fallback: Icons.star_rounded),
+                NxKitImage(NxKit.trophy, size: size * 0.2, fallback: Icons.emoji_events_rounded),
+                NxKitImage(NxKit.star, size: size * 0.09, fallback: Icons.star_rounded),
+              ]),
+              SizedBox(height: size * 0.02),
+            ],
+            Text(
             _l.isFa ? (_bannerFa ?? '') : (_bannerEn ?? ''),
             textAlign: TextAlign.center,
             textDirection: _l.isFa ? TextDirection.rtl : TextDirection.ltr,
@@ -776,6 +903,7 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
                 fontSize: size * 0.07,
                 fontWeight: FontWeight.w900),
           ),
+          ]),
         ),
       ),
     );
@@ -809,6 +937,10 @@ class _SnlGameState extends State<SnlGame> with TickerProviderStateMixin {
                     rolling: _rolling,
                     t: _rollCtl.value,
                     glow: _fancy || canTap,
+                    faceAsset: _nxSkin
+                        ? (int f) => 'assets/games/shared/dice/purple_$f.webp'
+                        : (_skin == kSnlSkinClassic ? (int f) => 'assets/games/shared/dice/marble_$f.webp' : null),
+                    rollAsset: _nxSkin ? NxKit.die3dPurple : null,
                   ),
                 );
               },
@@ -870,4 +1002,92 @@ class _SnlStars extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SnlStars oldDelegate) =>
       oldDelegate.count != count || oldDelegate.accent != accent;
+}
+
+
+/// NX turn bar (upload 20575): player 1 / match clock / player 2, the active side glowing. Two-player NX skins.
+class _SnlTurnTimerBar extends StatefulWidget {
+  const _SnlTurnTimerBar(
+      {required this.left, required this.right, required this.turn, required this.clock, required this.isFa,
+      required this.onSkin});
+  final String left, right;
+  final int turn;
+  final Stopwatch clock;
+  final bool isFa;
+  final VoidCallback onSkin;
+
+  @override
+  State<_SnlTurnTimerBar> createState() => _SnlTurnTimerBarState();
+}
+
+class _SnlTurnTimerBarState extends State<_SnlTurnTimerBar> {
+  late final Stream<int> _tick = Stream<int>.periodic(const Duration(seconds: 1), (int i) => i);
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: <Widget>[
+      Expanded(
+        child: AspectRatio(
+          aspectRatio: 900 / 203,
+          child: LayoutBuilder(builder: (BuildContext c, BoxConstraints k) {
+            final double w = k.maxWidth;
+            TextStyle st(bool on) => TextStyle(
+                color: on ? Colors.white : Colors.white60,
+                fontWeight: FontWeight.w900,
+                fontSize: w * 0.034,
+                shadows: on ? const <Shadow>[Shadow(color: Color(0xFF39E6FF), blurRadius: 10)] : null);
+            return Stack(children: <Widget>[
+              Positioned.fill(
+                  child: Image.asset('${kSnlNxDir}turn_timer_bar.webp',
+                      fit: BoxFit.fill, errorBuilder: (_, __, ___) => const SizedBox())),
+              Positioned(
+                left: w * 0.165,
+                top: 0,
+                bottom: 0,
+                width: w * 0.16,
+                child: Center(
+                    child: Text(widget.left, maxLines: 1, overflow: TextOverflow.ellipsis, style: st(widget.turn == 0))),
+              ),
+              Positioned(
+                right: w * 0.165,
+                top: 0,
+                bottom: 0,
+                width: w * 0.16,
+                child: Center(
+                    child:
+                        Text(widget.right, maxLines: 1, overflow: TextOverflow.ellipsis, style: st(widget.turn == 1))),
+              ),
+              Positioned(
+                left: w * 0.4,
+                right: w * 0.4,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: StreamBuilder<int>(
+                    stream: _tick,
+                    builder: (_, __) {
+                      final int t = widget.clock.elapsed.inSeconds;
+                      final String v =
+                          '${(t ~/ 60).toString().padLeft(2, '0')}:${(t % 60).toString().padLeft(2, '0')}';
+                      return Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
+                        Text(widget.isFa ? 'زمان بازی' : 'MATCH TIME',
+                            style: TextStyle(color: const Color(0xFF9FE9FF), fontSize: w * 0.022, fontWeight: FontWeight.w800)),
+                        Text(
+                            widget.isFa
+                                ? v.split('').map((String ch) => ch == ':' ? ch : snlNum(int.parse(ch), true)).join()
+                                : v,
+                            style: TextStyle(color: Colors.white, fontSize: w * 0.05, fontWeight: FontWeight.w900)),
+                      ]);
+                    },
+                  ),
+                ),
+              ),
+            ]);
+          }),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Nx2BoardButton(onTap: widget.onSkin, size: 30),
+    ]);
+  }
 }

@@ -45,7 +45,8 @@ void main() {
   test('constants, fields and the art-measured goal geometry', () {
     expect(K, 1.27);
     expect(PR, 53.0); // reference proportions: disc diameter ~0.12 of the playing width
-    expect(BR / PR, closeTo(.47, .01)); // reference: ball ~0.47 of the disc diameter
+    expect(BR, 25.5); // v14: ball radius x1.02 (was 25)
+    expect(BR / PR, closeTo(.48, .01)); // reference: ball ~0.47 of the disc diameter, v14 +2%
     // reference calibration v4: one felt law for shot and struck discs (pure 3.25/s drag), no launch glide
     expect(PF2, closeTo(3.25, 1e-9));
     expect(PF1, 0);
