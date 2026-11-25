@@ -16,3 +16,6 @@ drop function if exists public.nx_profanity_add(text, boolean, text), public.nx_
   public._nx_username_bad(text), public._nx_username_reserved(text), public._nx_name_rules_bypass(), public._nx_bad_token(text),
   public._nx_token_key(text, int), public._nx_text_norm(text);
 drop table if exists public.nx_profanity_words;
+-- 07b
+drop trigger if exists nx_ban_guard_caller on public.nx_hg_state;
+drop function if exists public._nx_g_ban_guard_caller();
