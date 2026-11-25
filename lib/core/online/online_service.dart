@@ -327,7 +327,7 @@ class OnlineService extends ChangeNotifier {
 
   /// New account with a username and password; the e-mail is optional (only for recovery, never shown to others).
   /// No codes: the session starts right away and persists on the phone until sign-out.
-  Future<bool> signUpUsername(String username, String password, {String? email}) async {
+  Future<bool> signUpUsername(String username, String password, {String? email, String? termsVersion}) async {
     final String u = normalizeUsername(username);
     final String? mail = (email ?? '').trim().isEmpty ? null : email!.trim();
     if (!usernamePattern.hasMatch(u)) {
@@ -350,7 +350,11 @@ class OnlineService extends ChangeNotifier {
       final AuthResponse r = await c.auth.signUp(
         email: mail ?? '$u@$internalDomain',
         password: mail == null ? 'nx#$password' : password,
-        data: <String, dynamic>{'username': u},
+        data: <String, dynamic>{
+          'username': u,
+          if (termsVersion != null) 'terms_version': termsVersion,
+          if (termsVersion != null) 'terms_accepted_at': DateTime.now().toUtc().toIso8601String(),
+        },
       );
       if (r.session == null) {
         // Projects that require e-mail confirmation return no session; sign in right away instead.

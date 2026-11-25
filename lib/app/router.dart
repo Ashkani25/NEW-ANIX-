@@ -21,6 +21,7 @@ import '../worlds/auth/auth_page.dart';
 import '../worlds/auth/password_reset_pages.dart';
 import '../worlds/auth/signin_required_page.dart';
 import '../worlds/hub/hub_page.dart';
+import '../worlds/legal/legal_page.dart';
 import '../worlds/hub/luxe_station_page.dart';
 import '../worlds/intro/intro_video_page.dart';
 import '../worlds/nexora_exchange/exchange_page.dart';
@@ -145,6 +146,8 @@ GoRouter buildRouter(WidgetRef ref) {
         builder: (context, state) => ForgotPasswordPage(email: state.uri.queryParameters['email']),
       ),
       GoRoute(path: '/reset-password', builder: (context, state) => const ResetPasswordPage()),
+      GoRoute(path: '/legal/privacy', builder: (context, state) => const LegalPage(kind: 'privacy')),
+      GoRoute(path: '/legal/terms', builder: (context, state) => const LegalPage(kind: 'terms')),
       GoRoute(path: '/account', builder: (context, state) => const AccountPage()),
       GoRoute(
         path: '/oracle',

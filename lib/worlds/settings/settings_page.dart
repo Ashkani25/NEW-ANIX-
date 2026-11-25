@@ -192,6 +192,25 @@ class SettingsPage extends ConsumerWidget {
               const DeleteAccountButton(),
             ]),
           ),
+          _section(context, context.tx('قوانین و حریم خصوصی', 'Legal')),
+          GlassPanel(
+            child: Column(children: <Widget>[
+              ListTile(
+                key: const ValueKey<String>('settings-privacy'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.privacy_tip_rounded, color: Color(0xFFF6E7BD)),
+                title: Text(context.tx('سیاست حریم خصوصی', 'Privacy Policy')),
+                onTap: () => context.push('/legal/privacy'),
+              ),
+              ListTile(
+                key: const ValueKey<String>('settings-terms'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.gavel_rounded, color: Color(0xFFF6E7BD)),
+                title: Text(context.tx('شرایط استفاده', 'Terms of Use')),
+                onTap: () => context.push('/legal/terms'),
+              ),
+            ]),
+          ),
           _section(context, context.tx('درباره‌ی نیکسورا ۲', 'About NEXORA 2')),
           GlassPanel(
             key: const ValueKey<String>('about_anix'),
