@@ -224,7 +224,10 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink {
       );
 
   void _connect() {
-    final RealtimeChannel ch = _c!.channel('nxm:$matchId', opts: RealtimeChannelConfig(key: '$mySeat', self: false));
+    // Private channel: Realtime Authorization (realtime.messages policies on the games project) admits only the match's
+    // players, so outsiders can neither listen to nor inject broadcasts / presence.
+    final RealtimeChannel ch =
+        _c!.channel('nxm:$matchId', opts: RealtimeChannelConfig(key: '$mySeat', self: false, private: true));
     ch
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -242,12 +245,9 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink {
         )
         .onBroadcast(
           event: 'mv',
-          callback: (Map<String, dynamic> p) {
-            final dynamic payload = p['payload'] ?? p;
-            if (payload is Map) {
-              _onRow(Map<String, dynamic>.from(payload));
-            }
-          },
+          // A broadcast is only a "new row landed" hint: anyone on the channel could forge its seat / seq / move, so the
+          // row itself is always read back from nx_match_moves (server-checked seat, authority and order).
+          callback: (Map<String, dynamic> _) => unawaited(_catchUp()),
         )
         .onBroadcast(
           event: 'rtt_q',
