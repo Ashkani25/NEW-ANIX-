@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/Ashimashi74/nexora-universe/arena/fs-v13/docs/media/banner.png" width="100%"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Ashkani25/NEW-ANIX-/main/docs/media/banner.png" width="100%"/></p>
 
 ## NEXORA v13 · نسخه‌ی ۱۳
 

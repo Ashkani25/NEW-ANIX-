@@ -189,6 +189,10 @@ class SupabaseMatchLink extends ChangeNotifier implements NetLink, ServerGameLin
 
   @override
   int get seatCount => _players.length;
+
+  /// Account id per global seat (bots / empty seats carry non-uuid ids).
+  List<String> get playerIds => List<String>.unmodifiable(_players);
+
   @override
   Set<int> get connectedSeats => Set<int>.unmodifiable(_connected);
   @override

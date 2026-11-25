@@ -340,7 +340,16 @@ class _CommentsSheetState extends ConsumerState<_CommentsSheet> {
                                 icon: const Icon(Icons.delete_outline_rounded, size: 20),
                                 onPressed: () => ctrl.deleteComment(widget.postId, cm.id),
                               )
-                            : null,
+                            : IconButton(
+                                tooltip: context.tx('گزارش دیدگاه', 'Report comment'),
+                                icon: const Icon(Icons.flag_outlined, size: 20, color: NxColors.textDim),
+                                onPressed: () => reportContent(context,
+                                    targetUser: reportableUserId(cm.authorId),
+                                    kind: 'comment',
+                                    targetId: cm.id,
+                                    label: cm.authorName,
+                                    excerpt: cm.text),
+                              ),
                       );
                     },
                   ),

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../backend/backend_gateway.dart';
+import '../safety/install_id.dart';
 import 'online_config.dart';
 
 /// Initialise Supabase once at startup (no network needed: the session is restored from disk).
@@ -230,6 +231,7 @@ class OnlineService extends ChangeNotifier {
         return 'smtp';
       }
       if (code == 'signup_disabled' || m.contains('signups not allowed')) return 'signup_disabled';
+      if (code == 'user_banned' || m == 'banned' || m.contains('user is banned')) return 'banned';
       if (code == 'invalid_credentials' || m.contains('invalid login')) return 'invalid_login';
       if (m.contains('already') || m.contains('registered')) return 'email_taken';
       if (m.contains('password')) return 'weak_password';
@@ -237,6 +239,7 @@ class OnlineService extends ChangeNotifier {
     }
     if (e is FunctionException) {
       if (e.status == 429) return 'rate_limit';
+      if (e.status == 403) return 'banned';
       if (e.status == 400 || e.status == 401) return 'invalid_login';
     }
     final String s = '$e';
@@ -271,19 +274,27 @@ class OnlineService extends ChangeNotifier {
   /// Guest → permanent account (same uid, all progress kept). Without a guest: new account.
   Future<bool> registerEmail(String email, String password, {String? username}) async {
     final String? safeUsername = signupUsername(username);
+    final String? install = await InstallId.get();
     final bool? ok = await _run<bool>((SupabaseClient c) async {
       final User? u = c.auth.currentUser;
       if (u != null && u.isAnonymous) {
-        await c.auth.updateUser(UserAttributes(email: email.trim(), password: password));
+        await c.auth.updateUser(UserAttributes(
+            email: email.trim(),
+            password: password,
+            data: install == null ? null : <String, dynamic>{'nx_install': install}));
       } else {
         await c.auth.signUp(
           email: email.trim(),
           password: password,
-          data: safeUsername == null ? null : <String, dynamic>{'username': safeUsername},
+          data: <String, dynamic>{
+            if (safeUsername != null) 'username': safeUsername,
+            if (install != null) 'nx_install': install,
+          },
         );
       }
       return true;
     });
+    if (ok == true && !await _installCleared()) return false;
     return ok ?? false;
   }
 
@@ -368,12 +379,15 @@ class OnlineService extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+    final String? install = await InstallId.get();
     final bool? ok = await _run<bool>((SupabaseClient c) async {
       final AuthResponse r = await c.auth.signUp(
         email: mail ?? '$u@$internalDomain',
         password: mail == null ? 'nx#$password' : password,
         data: <String, dynamic>{
           'username': u,
+          // install id for the ban-evasion check; the server reads it and never stores it in the account
+          if (install != null) 'nx_install': install,
           if (termsVersion != null) 'terms_version': termsVersion,
           if (termsVersion != null) 'terms_accepted_at': DateTime.now().toUtc().toIso8601String(),
         },
@@ -384,6 +398,7 @@ class OnlineService extends ChangeNotifier {
       }
       return true;
     });
+    if (ok == true && !await _installCleared()) return false;
     if (ok == true) await _rememberUsername(u);
     return ok ?? false;
   }
@@ -393,19 +408,25 @@ class OnlineService extends ChangeNotifier {
   /// sending an e-mail address to the phone.
   Future<bool> signInIdentifier(String identifier, String password) async {
     final String id = identifier.trim();
+    final String? install = await InstallId.get();
     final bool? ok = await _run<bool>((SupabaseClient c) async {
       if (id.contains('@')) {
         await c.auth.signInWithPassword(email: id, password: password);
         return true;
       }
       final FunctionResponse r = await c.functions
-          .invoke('nx-login', body: <String, dynamic>{'username': normalizeUsername(id), 'password': password});
+          .invoke('nx-login', body: <String, dynamic>{
+            'username': normalizeUsername(id),
+            'password': password,
+            if (install != null) 'install': install,
+          });
       final dynamic d = r.data;
       final String? refresh = d is Map ? d['refresh_token'] as String? : null;
       if (refresh == null) throw const AuthException('Invalid login credentials', code: 'invalid_credentials');
       await c.auth.setSession(refresh);
       return true;
     });
+    if (ok == true && !await _installCleared()) return false;
     if (ok == true) await _rememberUsername(id);
     return ok ?? false;
   }
@@ -415,7 +436,29 @@ class OnlineService extends ChangeNotifier {
       await c.auth.signInWithPassword(email: loginEmail(email), password: loginPassword(email, password));
       return true;
     });
+    if (ok == true && !await _installCleared()) return false;
     return ok ?? false;
+  }
+
+  /// Ban-evasion hold (P0 #7c): after a successful sign-in / sign-up, asks the server whether this install is held
+  /// because a banned account was deleted on it. If so the fresh session is dropped and [lastError] becomes 'banned'.
+  /// Returns true when the session may stay (also when the server cannot answer: the server-side checks still apply).
+  Future<bool> _installCleared() async {
+    final SupabaseClient? c = client;
+    final String? install = await InstallId.get();
+    if (c == null || install == null) return true;
+    try {
+      final dynamic held = await c.rpc('nx_install_held', params: <String, dynamic>{'p_install': install});
+      if (held != true) return true;
+    } catch (_) {
+      return true;
+    }
+    try {
+      await c.auth.signOut(scope: SignOutScope.local);
+    } catch (_) {}
+    lastError = 'banned';
+    notifyListeners();
+    return false;
   }
 
   /// Change the signed-in account's password (same prefix rule for username accounts), then refresh the token so the
@@ -506,9 +549,15 @@ class OnlineService extends ChangeNotifier {
     final SupabaseClient? c = client;
     if (c == null || c.auth.currentSession == null || isGuest) return 'not_signed_in';
     final String? pw = (password == null || password.isEmpty) ? null : (isInternalAccount ? 'nx#$password' : password);
+    final String? install = await InstallId.get();
     Future<String?> call(bool dry) async {
-      final dynamic r = await c.rpc('nx_delete_account',
-          params: <String, dynamic>{'p_confirm': 'DELETE', 'p_password': pw, 'p_dry_run': dry});
+      final dynamic r = await c.rpc('nx_delete_account', params: <String, dynamic>{
+        'p_confirm': 'DELETE',
+        'p_password': pw,
+        'p_dry_run': dry,
+        // only used by the server when the account is banned (ban-evasion hold, kept as a keyed hash)
+        if (install != null) 'p_install': install,
+      });
       if (r is Map && r['ok'] == true) return null;
       return r is Map ? (r['error'] as String? ?? 'failed') : 'failed';
     }

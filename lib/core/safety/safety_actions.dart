@@ -6,7 +6,8 @@ import '../theme/nx_theme.dart';
 import '../ui2/anix_kit.dart';
 import '../ui2/luxe.dart';
 
-/// Report / block helpers shared by every surface (P0 #7): profiles, chat messages, posts, communities, rooms.
+/// Report / block helpers shared by every surface (P0 #7): profiles, chat messages, posts, comments, stories,
+/// communities, rooms and online match results.
 /// Reports go to the existing moderation queue (`nx_report_user` -> admin panel "Reports" tab); blocks use
 /// `nx_block_user` / `nx_unblock_user` and are enforced by the server (DMs, calls, invites).
 
@@ -38,7 +39,71 @@ const List<(String, String, String)> _reasons = <(String, String, String)>[
   ('other', 'دلیل دیگر', 'Something else'),
 ];
 
-/// Asks for a reason and files a report. [kind]: user, profile, message, post, comment, community, room, match.
+final RegExp _uuidRe = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+
+/// [id] when it is a server account id (uuid); null for local, guest or bot ids, which cannot be reported as a user.
+String? reportableUserId(String? id) {
+  final String v = (id ?? '').trim().toLowerCase();
+  return _uuidRe.hasMatch(v) ? v : null;
+}
+
+/// The reason text sent with a report: the chosen reason (and details), plus up to 200 characters of [excerpt] so
+/// moderators still see the content if it is deleted later. The server keeps at most 500 characters.
+String composeReportReason(String reason, String? excerpt) {
+  String full = reason;
+  if (excerpt != null && excerpt.trim().isNotEmpty) {
+    final String ex = excerpt.trim();
+    full = '$reason | «${ex.length > 200 ? '${ex.substring(0, 200)}…' : ex}»';
+  }
+  return full.length > 500 ? full.substring(0, 500) : full;
+}
+
+/// Report one of the other players of an online match (game result screen). [players] are (account id, name) per
+/// seat; [myId] is left out, as are bots and seats without an account id. With several opponents a picker opens first.
+Future<void> reportMatchPlayer(
+  BuildContext context, {
+  required String matchId,
+  required List<(String, String)> players,
+  required String? myId,
+  String? game,
+}) async {
+  final List<(String, String)> others = <(String, String)>[
+    for (final (String id, String name) in players)
+      if (reportableUserId(id) != null && reportableUserId(id) != reportableUserId(myId)) (reportableUserId(id)!, name),
+  ];
+  if (others.isEmpty) {
+    luxeToast(context, context.tx('بازیکنی برای گزارش نیست.', 'No player to report.'), error: true);
+    return;
+  }
+  (String, String)? pick = others.length == 1 ? others.first : null;
+  pick ??= await showModalBottomSheet<(String, String)>(
+    context: context,
+    builder: (BuildContext ctx) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: Text(ctx.tx('کدام بازیکن را گزارش می‌کنی؟', 'Which player do you want to report?'),
+              style: const TextStyle(fontWeight: FontWeight.w800)),
+        ),
+        for (final (String id, String name) in others)
+          ListTile(
+            leading: const Icon(Icons.person_outline_rounded),
+            title: Text(name),
+            onTap: () => Navigator.pop(ctx, (id, name)),
+          ),
+      ]),
+    ),
+  );
+  if (pick == null || !context.mounted) return;
+  await reportContent(context,
+      targetUser: pick.$1,
+      kind: 'match',
+      targetId: matchId,
+      label: pick.$2,
+      excerpt: game == null ? null : context.tx('بازی: $game', 'Game: $game'));
+}
+
+/// Asks for a reason and files a report. [kind]: user, profile, message, post, comment, story, community, room, match.
 /// [excerpt] (e.g. the message text) is attached so moderators see it even if it is deleted later.
 Future<void> reportContent(
   BuildContext context, {
@@ -58,11 +123,7 @@ Future<void> reportContent(
     builder: (BuildContext ctx) => _ReportDialog(label: label),
   );
   if (reason == null || !context.mounted) return;
-  String full = reason;
-  if (excerpt != null && excerpt.trim().isNotEmpty) {
-    final String ex = excerpt.trim();
-    full = '$reason | «${ex.length > 200 ? '${ex.substring(0, 200)}…' : ex}»';
-  }
+  final String full = composeReportReason(reason, excerpt);
   final bool fa = context.isFa;
   try {
     final dynamic r = await o.rpc('nx_report_user', <String, dynamic>{
