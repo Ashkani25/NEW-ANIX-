@@ -24,6 +24,8 @@ intro.txt
 badging.txt
 shots/
 android/
+# The vendored Bazaar billing plugin ships its own Android sources.
+!third_party/flutter_poolakey/android/
 
 # Owner uploads used as build inputs (the shipped art is generated from them; the sources stay out of Git).
 tool/inputs/

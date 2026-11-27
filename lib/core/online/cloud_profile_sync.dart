@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../profile/profile_service.dart';
 import '../storage/local_store.dart';
 import 'online_service.dart';
+import '../economy/bazaar_store.dart';
 import '../economy/gem_shop.dart';
 
 /// Keeps the local identity (offline cache) and the server profile in sync.
@@ -134,6 +135,8 @@ class CloudProfileSync {
       _linkedUid = uid;
       // Gems: welcome grant (once per account) + the server balance, and the shop's live gem prices.
       unawaited(GemShop.instance.refresh());
+      // Rial packs bought on Cafe Bazaar that were paid but not verified yet (app killed, network drop).
+      unawaited(BazaarStore.instance.recoverPending());
       await flush();
     } catch (e) {
       debugPrint('cloud link failed: $e');

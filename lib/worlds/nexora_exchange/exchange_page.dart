@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/catalog/catalog.dart';
+import '../../core/economy/bazaar_store.dart';
 import '../../core/economy/carrom_shop_view.dart';
 import '../../core/economy/gem_shop.dart';
 import '../../core/ui2/nx_kit.dart';
@@ -137,7 +138,7 @@ class _ExchangePageState extends ConsumerState<ExchangePage> {
   Widget build(BuildContext context) {
     final List<CatalogItem> featured = featuredForDate(_day);
     final NxThemeColors visual = NxThemeColors.of(context);
-    final int tabCount = _kTabs.length + 3;
+    final int tabCount = _kTabs.length + 4;
     return NxWorldScaffold(
       title: 'NEXORA EXCHANGE',
       palette: WorldPalette.exchange,
@@ -187,6 +188,11 @@ class _ExchangePageState extends ConsumerState<ExchangePage> {
                     dividerColor: Colors.transparent,
                     tabs: <Widget>[
                       Tab(
+                        icon: const Icon(Icons.shopping_bag_rounded, size: 18),
+                        text: context.tx('خرید سکه و الماس', 'Coins & gems'),
+                        iconMargin: EdgeInsets.zero,
+                      ),
+                      Tab(
                         icon: const NxGemIcon(size: 18),
                         text: context.tx('تیم‌ها · الماس', 'Teams · Gems'),
                         iconMargin: EdgeInsets.zero,
@@ -214,6 +220,7 @@ class _ExchangePageState extends ConsumerState<ExchangePage> {
           ],
           body: TabBarView(
             children: <Widget>[
+              const _PacksTab(),
               const _GemTeamsTab(),
               CarromShopPanel(
                 isFa: context.isFa,
@@ -1537,6 +1544,121 @@ class _GemTeamsTabState extends ConsumerState<_GemTeamsTab> {
                   ),
                 );
               }, childCount: teams.length),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+}
+
+
+/// Coin & gem packs paid in rials through Cafe Bazaar (prices and contents come from nx_iap_products).
+class _PacksTab extends ConsumerStatefulWidget {
+  const _PacksTab();
+  @override
+  ConsumerState<_PacksTab> createState() => _PacksTabState();
+}
+
+class _PacksTabState extends ConsumerState<_PacksTab> {
+  final BazaarStore store = BazaarStore.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    store.addListener(_on);
+    if (!store.loaded) unawaited(store.load());
+  }
+
+  @override
+  void dispose() {
+    store.removeListener(_on);
+    super.dispose();
+  }
+
+  void _on() {
+    if (mounted) setState(() {});
+  }
+
+  String _toman(BuildContext context, int v) {
+    final String s = v.toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (Match m) => '${m[1]},');
+    return context.tx('${_digits(context, s)} تومان', '$s toman');
+  }
+
+  Future<void> _buy(IapPack pack) async {
+    final IapResult r = await store.buy(pack);
+    if (!mounted) return;
+    if (r.ok) {
+      final String what = r.grantedGems > 0
+          ? context.tx('${_digits(context, '${r.grantedGems}')} الماس', '${r.grantedGems} gems')
+          : context.tx('${_digits(context, '${r.grantedCoins}')} سکه', '${r.grantedCoins} coins');
+      luxeToast(context, context.tx('$what به حسابت اضافه شد ✓', '$what added ✓'));
+    } else if (r.error != 'cancelled') {
+      luxeToast(context, iapErrorText(r.error, context.isFa));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ProfileService p = ref.watch(profileProvider);
+    final NxThemeColors visual = NxThemeColors.of(context);
+    return Builder(builder: (BuildContext ctx) {
+      return CustomScrollView(
+        key: const PageStorageKey<String>('exchange.packs'),
+        slivers: <Widget>[
+          SliverOverlapInjector(handle: NestedScrollView.sliverOverlapAbsorberHandleFor(ctx)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(NxSpace.md, NxSpace.sm, NxSpace.md, NxSpace.sm),
+              child: Row(children: <Widget>[
+                Expanded(
+                  child: Text(context.tx('پرداخت امن با کافه‌بازار', 'Secure payment with Cafe Bazaar'),
+                      style: TextStyle(color: visual.muted, fontSize: 12, fontWeight: FontWeight.w700)),
+                ),
+                Nx2GemStat(gems: p.gems),
+              ]),
+            ),
+          ),
+          if (!store.configured)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(NxSpace.md),
+                child: Text(iapErrorText('not_configured', context.isFa),
+                    textAlign: TextAlign.center, style: TextStyle(color: visual.muted)),
+              ),
+            ),
+          if (store.packs.isEmpty && !store.loaded)
+            const SliverToBoxAdapter(
+                child: Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()))),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(NxSpace.md, 0, NxSpace.md, NxSpace.lg),
+            sliver: SliverList.separated(
+              itemCount: store.packs.length,
+              separatorBuilder: (_, __) => const SizedBox(height: NxSpace.sm),
+              itemBuilder: (BuildContext context, int i) {
+                final IapPack pack = store.packs[i];
+                return GlassPanel(
+                  borderColor: visual.border.withValues(alpha: 0.72),
+                  padding: const EdgeInsets.all(NxSpace.md),
+                  child: Row(children: <Widget>[
+                    pack.gems > 0 ? const NxGemIcon(size: 34) : const NxCoinIcon(size: 34),
+                    const SizedBox(width: NxSpace.md),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
+                        Text(context.isFa ? pack.titleFa : pack.titleEn,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                        if (pack.badgeFa != null && context.isFa)
+                          Text(pack.badgeFa!,
+                              style: TextStyle(color: visual.accent, fontSize: 11, fontWeight: FontWeight.w800)),
+                      ]),
+                    ),
+                    FilledButton(
+                      onPressed: store.configured && !store.busy ? () => _buy(pack) : null,
+                      child: Text(_toman(context, pack.priceToman)),
+                    ),
+                  ]),
+                );
+              },
             ),
           ),
         ],

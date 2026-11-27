@@ -34,6 +34,8 @@ env:
   SUPABASE_URL: https://eisstodgncimypdawisy.supabase.co
   SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVpc3N0b2RnbmNpbXlwZGF3aXN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQyMjkwMTAsImV4cCI6MjEwOTgwNTAxMH0.uEPldAQjJdRyZTGXaz_OpFR7WpFXMiPXlW1S34cR3p8
   LIVEKIT_URL: wss://nexora-space-xzjzlfyl.livekit.cloud
+  # Cafe Bazaar in-app billing RSA public key (repo Settings -> Variables -> BAZAAR_RSA_KEY). Public by design.
+  BAZAAR_RSA_KEY: ${{ vars.BAZAAR_RSA_KEY }}
   # Second Supabase project (games, rooms, matchmaking, tournaments, realtime match state).
   GAMES_SUPABASE_URL: https://eyzafhrefnqlwcjpcdyg.supabase.co
   GAMES_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5emFmaHJlZm5xbHdjanBjZHlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4OTUzNjcsImV4cCI6MjExMDQ3MTM2N30.YfdEhbEbvbQ738snwc5C47LYx-NYRXywX66dgMEZh-M
@@ -140,6 +142,15 @@ jobs:
               s += '\ndependencies {\n    ' + dep + '\n}\n'
               open(f, 'w').write(s)
               print('desugaring enabled in', f)
+          # Cafe Bazaar billing (flutter_poolakey) pulls Poolakey from JitPack.
+          for f in glob.glob('android/build.gradle*') + glob.glob('android/settings.gradle*'):
+              s = open(f).read()
+              if 'jitpack.io' in s or 'repositories' not in s:
+                  continue
+              repo = 'maven { url = uri("https://jitpack.io") }' if f.endswith('.kts') else "maven { url 'https://jitpack.io' }"
+              s = re.sub(r'(allprojects\s*\{\s*repositories\s*\{)', r'\1\n        ' + repo.replace('\\', '\\\\'), s, count=1)
+              open(f, 'w').write(s)
+              print('jitpack added to', f)
           m = 'android/app/src/main/AndroidManifest.xml'
           s = open(m).read()
           if 'POST_NOTIFICATIONS' not in s:
@@ -316,6 +327,7 @@ jobs:
             --dart-define=SOCIAL_SUPABASE_ANON_KEY=$SOCIAL_SUPABASE_ANON_KEY \
             --dart-define=SUPABASE_URL=$SUPABASE_URL \
             --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+            --dart-define=BAZAAR_RSA_KEY="$BAZAAR_RSA_KEY" \
             --dart-define=LIVEKIT_URL=$LIVEKIT_URL 2>&1 | tee build-apk.txt
 
       - name: Build universal release APK
@@ -332,6 +344,7 @@ jobs:
             --dart-define=SOCIAL_SUPABASE_ANON_KEY=$SOCIAL_SUPABASE_ANON_KEY \
             --dart-define=SUPABASE_URL=$SUPABASE_URL \
             --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+            --dart-define=BAZAAR_RSA_KEY="$BAZAAR_RSA_KEY" \
             --dart-define=LIVEKIT_URL=$LIVEKIT_URL 2>&1 | tee -a build-apk.txt
 
       - name: Package release files
